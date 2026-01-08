@@ -1,0 +1,26 @@
+{
+    "test1": {
+        "task": "测试llm能否从时间顺序语言中推断出用户在做什么",
+        "nodes": [
+            {
+                "node_type": "tool-first",
+                "node_name": "小时间窗口分析",
+                "task_prompt": "根据时间线数据，推断用户在这段时间内可能在做什么事情。注意活动的切换模式和时间分布。",
+                "thread_id": "main",
+                "parent_thread_id": null,
+                "initial_tool_name": "query_behavior_timeline",
+                "initial_tool_args": {
+                    "start_time": "2026-01-03 12:00:00",
+                    "end_time": "2026-01-03 13:00:00",
+                    "output_limit": 30
+                },
+                "data_out": true,
+                "data_out_description": "用户行为时间线分析: "
+            }
+        ],
+        "tools_limit": {
+            "query_behavior_timeline": 5,
+            "query_behavior_logs": 5
+        }
+    }
+}
