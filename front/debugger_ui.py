@@ -626,9 +626,17 @@ class NodeGraphView(QGraphicsView):
         self.drag_start_item = None
         self.drag_temp_line = None
         
-        # Test Data
-        self.add_node({"node_name": "Start", "node_type": "llm-first", "thread_id": "main", "task_prompt": "Start task", "fixed": True}, 0, 0)
-        self.centerOn(0, 0)
+        # Thread View Index Management
+        self.thread_view_indices = {} # thread_id -> index (int)
+        
+        # Test Data - Position at bottom-left area (positive Y goes down in Qt)
+        # Use Y=200 as baseline for main thread (appears in lower area of screen)
+        self.main_y_baseline = 200
+        self.add_node({"node_name": "main", "node_type": "llm-first", "thread_id": "main", "task_prompt": "Start task", "fixed": True, "thread_view_index": 0}, 0, self.main_y_baseline)
+        
+        # Center view on bottom-left area to show first node at screen's bottom-left
+        # Offset the center to the right and down to position first node at bottom-left
+        self.center_to_bottom_left()
         
         # Add overlay button
         self.add_btn = QPushButton("+", self)
@@ -660,6 +668,26 @@ class NodeGraphView(QGraphicsView):
         shadow.setColor(QColor(0, 0, 0, 100))
         shadow.setOffset(0, 4)
         self.add_btn.setGraphicsEffect(shadow)
+    
+    def center_to_bottom_left(self):
+        """Center view to show first node at bottom-left of screen"""
+        # Get the visible viewport size
+        viewport_rect = self.viewport().rect()
+        viewport_width = viewport_rect.width()
+        viewport_height = viewport_rect.height()
+        
+        # Calculate offset to position node (at 0, main_y_baseline) at bottom-left of viewport
+        # We want the node to appear with some margin from the edges
+        margin_x = 150  # Horizontal margin from left edge
+        margin_y = 150  # Vertical margin from bottom edge
+        
+        # Center point calculation: we want the node at (0, main_y_baseline) to appear
+        # at (margin_x, viewport_height - margin_y) in viewport coordinates
+        # So the center of the view should be at:
+        center_x = 0 + (viewport_width / 2 - margin_x)
+        center_y = self.main_y_baseline + (viewport_height / 2 - margin_y)
+        
+        self.centerOn(-center_x + margin_x, center_y - margin_y)
 
     def get_thread_color(self, thread_id: str) -> QColor:
         """Get or create a color for a thread_id"""
@@ -773,8 +801,25 @@ class NodeGraphView(QGraphicsView):
         # ID re-mapping for parent/child consistency
         old_id_map = {}
         
+        # Map existing thread indices if present
+        for node in nodes_data:
+            tid = node.get("thread_id", "main")
+            tidx = node.get("thread_view_index")
+            if tidx is not None and tid not in self.thread_view_indices:
+                self.thread_view_indices[tid] = tidx
+
         # First pass: Assign new IDs and Map
         for node in nodes_data:
+            # Ensure thread_view_index
+            tid = node.get("thread_id", "main")
+            if tid not in self.thread_view_indices:
+                # Assign new index: max + 1
+                current_indices = self.thread_view_indices.values()
+                next_idx = max(current_indices) + 1 if current_indices else 0
+                self.thread_view_indices[tid] = next_idx
+            
+            node["thread_view_index"] = self.thread_view_indices[tid]
+
             old_id = node.get("id")
             new_id = self.next_node_id
             
@@ -811,10 +856,23 @@ class NodeGraphView(QGraphicsView):
             if pid in old_id_map:
                 node["parent_id"] = old_id_map[pid]
             
-            # Determine Y
-            y = 0
+            # Determine Y based on thread_view_index (Top-Down per requirement)
+            # "One vertical coordinate can only have one thread"
+            # User Feedback: "id越大应该是往上的" (Larger ID should be upwards).
+            # In Qt, Up is negative Y relative to baseline.
+            # So we SUBTRACT the offset.
+            
+            tidx = node.get("thread_view_index", 0)
+            thread_gap_y = 120 # Vertical spacing between threads
+            
+            y = self.main_y_baseline - (tidx * thread_gap_y)
+            
+            # Override with saved _ui_pos ONLY for X (dragged horizontally?) 
+            # Or ignore Y completely to enforce strict layout.
             if "_ui_pos" in node:
-                y = node["_ui_pos"][1]
+                # node["_ui_pos"][1] = y # Force Y to match thread
+                pass 
+            
             
             # X is determined by ID in add_node
             self.add_node(node, 0, y)
@@ -858,12 +916,41 @@ class NodeGraphView(QGraphicsView):
         # Ensure thread_id exists
         if "thread_id" not in node_data:
             node_data["thread_id"] = "main"
-        
+            
+        # Ensure thread_view_index exists
+        tid = node_data["thread_id"]
+        if "thread_view_index" not in node_data:
+            if tid in self.thread_view_indices:
+                node_data["thread_view_index"] = self.thread_view_indices[tid]
+            else:
+                # New thread dynamic assignment
+                # Warning: adding a simple node shouldn't usually create a new thread index unless it IS a new thread.
+                # If it's a new thread_id not seen before, assign next index.
+                current_indices = self.thread_view_indices.values()
+                next_idx = max(current_indices) + 1 if current_indices else 0
+                self.thread_view_indices[tid] = next_idx
+                node_data["thread_view_index"] = next_idx
+        else:
+             # Sync back to manager if not present
+             if tid not in self.thread_view_indices:
+                 self.thread_view_indices[tid] = node_data["thread_view_index"]
+
         # Enforce X Coordinate based on ID
         # ID 1 -> 0
         # ID 2 -> GAP
         # ...
         calculated_x = (node_id - 1) * self.node_gap_x
+        
+        # Enforce Y Coordinate based on thread_view_index
+        thread_gap_y = 120
+        tidx = node_data["thread_view_index"]
+        # Larger Index = Higher Up = Smaller Y value
+        calculated_y = self.main_y_baseline - (tidx * thread_gap_y)
+        
+        # Ignore passed 'y' argument in favor of strict thread layout?
+        # The 'y' arg is often calculated from parent.y() - 120 etc.
+        # We should use strict calculation.
+        y = calculated_y
         
         # Get thread color
         thread_color = self.get_thread_color(node_data["thread_id"])
@@ -970,6 +1057,7 @@ class NodeGraphView(QGraphicsView):
             add_node_action = menu.addAction("Add Node")
             add_branch_action = menu.addAction("Create Branch Point")
             menu.addSeparator()
+            delete_thread_action = menu.addAction("Delete Thread")
             delete_action = menu.addAction("Delete Node")
             
             action = menu.exec_(self.mapToGlobal(event.pos()))
@@ -980,6 +1068,8 @@ class NodeGraphView(QGraphicsView):
                 self.add_branch_from(item)
             elif action == delete_action:
                 self.delete_node(item)
+            elif action == delete_thread_action:
+                self.delete_thread(item)
 
     def add_new_node_from(self, parent_item):
         # Extension: Same Y level, same thread
@@ -1003,6 +1093,13 @@ class NodeGraphView(QGraphicsView):
         
         # Create new thread id for branch
         new_thread_id = f"branch_{self.next_node_id}"
+
+        # Use next available index
+        current_indices = self.thread_view_indices.values()
+        next_idx = max(current_indices) + 1 if current_indices else 1 # 0 is main
+        
+        # Register new thread
+        self.thread_view_indices[new_thread_id] = next_idx
         
         new_data = {
             "node_name": "Branch", 
@@ -1011,8 +1108,10 @@ class NodeGraphView(QGraphicsView):
             "parent_thread_id": parent_thread,
             "task_prompt": "Branch task...",
             "parent_id": parent_item.node_data.get("id"),
+            "thread_view_index": next_idx
         }
-        self.add_node(new_data, 0, new_y)
+        # Y will be calculated by add_node
+        self.add_node(new_data, 0, 0)
         self.update_connections()
 
     def delete_node(self, item):
@@ -1034,6 +1133,49 @@ class NodeGraphView(QGraphicsView):
         
         self.update_connections()
     
+    def delete_thread(self, item):
+        """
+        Delete the entire thread that this node belongs to.
+        Apply specific shift logic: 'others smaller than his thread coordinate id + 1'
+        """
+        thread_id = item.node_data.get("thread_id", "main")
+        if thread_id == "main":
+            print("Cannot delete main thread yet")
+            return
+            
+        deleted_idx = self.thread_view_indices.get(thread_id)
+        if deleted_idx is None:
+            return
+            
+        # 1. Remove all nodes of this thread
+        nodes_to_remove = []
+        for i in self.scene.items():
+            if isinstance(i, NodeItem) and i.node_data.get("thread_id") == thread_id:
+                nodes_to_remove.append(i)
+        
+        for node in nodes_to_remove:
+            self.scene.removeItem(node)
+            
+        # 2. Update Indices
+        # Rule: "Delete that thread's all IDs, others smaller than his thread coordinate id + 1"
+        del self.thread_view_indices[thread_id]
+        
+        for tid, idx in self.thread_view_indices.items():
+            if idx < deleted_idx:
+                self.thread_view_indices[tid] = idx + 1
+        
+        # 3. Update all remaining nodes positions
+        remaining_nodes = [i for i in self.scene.items() if isinstance(i, NodeItem)]
+        for node in remaining_nodes:
+            tid = node.node_data.get("thread_id", "main")
+            if tid in self.thread_view_indices:
+                new_idx = self.thread_view_indices[tid]
+                node.node_data["thread_view_index"] = new_idx
+                # Recalculate Y (Larger Index = Upwards = Negative Offset)
+                node.setPos(node.x(), self.main_y_baseline - (new_idx * 120))
+        
+        self.update_connections()
+
     def swap_nodes(self, item, direction):
         """
         Swap node with its neighbor.
@@ -1044,6 +1186,16 @@ class NodeGraphView(QGraphicsView):
         """
         current_id = item.node_data.get("id", 0)
         target_id = current_id + direction
+        
+        # Protect ID=1 node - it cannot be swapped
+        if current_id == 1:
+            print("Cannot swap: Node ID 1 (main) is protected and cannot be swapped")
+            return
+        
+        # Cannot swap with ID=1 node
+        if target_id == 1:
+            print("Cannot swap: Cannot swap with Node ID 1 (main) - it is protected")
+            return
         
         # Validate target ID
         if target_id < 1:
@@ -1082,13 +1234,13 @@ class NodeGraphView(QGraphicsView):
         print(f"Swapped nodes: {current_id} ↔ {target_id}")
 
     def add_node_at_center(self):
-        # Always add to main axis Y=0
+        # Always add to main axis at main_y_baseline
         new_data = {
             "node_name": "New Node", 
             "node_type": "llm-first", 
             "task_prompt": "New task..."
         }
-        self.add_node(new_data, 0, 0)
+        self.add_node(new_data, 0, self.main_y_baseline)
 
 class NodePropertyEditor(QGroupBox):
     nodeDataChanged = pyqtSignal()  # Signal emitted when node data is saved
@@ -1138,9 +1290,8 @@ class NodePropertyEditor(QGroupBox):
         self.branch_name_edit = QLineEdit()
         self.branch_name_edit.setPlaceholderText("Branch name (thread_id)")
         
-        # --- LLM Config ---
+        # --- Task Prompt (will be in separate tab) ---
         self.prompt_edit = QTextEdit()
-        self.prompt_edit.setMaximumHeight(80)
         self.prompt_edit.setPlaceholderText("Task Prompt (leave empty for tool-only)")
         
         # --- Tools Config ---
@@ -1180,7 +1331,7 @@ class NodePropertyEditor(QGroupBox):
         self.left_form.addRow("Name:", self.name_edit)
         self.left_form.addRow("Type:", self.type_combo)
         self.left_form.addRow("Branch:", self.branch_name_edit)
-        self.left_form.addRow("Task Prompt:", self.prompt_edit)
+        # Task Prompt moved to separate tab
         self.left_form.addRow("Tools:", self.tools_edit)
         self.left_form.addRow("", self.enable_tool_loop_cb)
         
@@ -1201,6 +1352,15 @@ class NodePropertyEditor(QGroupBox):
         self.right_form.addRow("", self.data_out_cb)
         self.right_form.addRow("Out Thread:", self.data_out_thread_edit)
         self.right_form.addRow("Out Desc:", self.desc_edit)
+        
+        # --- Task Prompt Tab ---
+        self.task_prompt_tab = QWidget()
+        task_prompt_layout = QVBoxLayout(self.task_prompt_tab)
+        task_prompt_layout.setContentsMargins(0, 0, 0, 0)  # No margins for full screen
+        task_prompt_layout.setSpacing(0)
+        
+        # Add the prompt editor to fill the entire tab
+        task_prompt_layout.addWidget(self.prompt_edit)
         
         # --- LLM Setting Tab ---
         self.llm_setting_tab = QWidget()
@@ -1234,6 +1394,7 @@ class NodePropertyEditor(QGroupBox):
         
         # Add tabs to tab widget
         self.tab_widget.addTab(self.node_setting_tab, "Node Setting")
+        self.tab_widget.addTab(self.task_prompt_tab, "Task Prompt")
         self.tab_widget.addTab(self.llm_setting_tab, "LLM Setting")
         
         # Save Button
@@ -1260,10 +1421,17 @@ class NodePropertyEditor(QGroupBox):
         for w in self.tool_first_widgets:
             if w: w.setVisible(is_tool_first)
 
-    def load_node(self, node_data):
+    def load_node(self, node_data, is_first_in_thread=False):
         self.current_node_data = node_data
         self.setEnabled(True)
+        
+        # Check if this is node ID 1 (protected main node)
+        is_main_node = node_data.get("id") == 1
+        
         self.name_edit.setText(node_data.get("node_name", ""))
+        # Lock name field for ID=1 node
+        self.name_edit.setReadOnly(is_main_node)
+        self.name_edit.setStyleSheet("background-color: #3e3e3e;" if is_main_node else "")
         
         ntype = node_data.get("node_type", "llm-first")
         # Handle legacy types map
@@ -1273,6 +1441,9 @@ class NodePropertyEditor(QGroupBox):
         
         # Load branch name (thread_id)
         self.branch_name_edit.setText(node_data.get("thread_id", "main"))
+        # Lock branch field for ID=1 node (must stay as 'main')
+        self.branch_name_edit.setReadOnly(is_main_node)
+        self.branch_name_edit.setStyleSheet("background-color: #3e3e3e;" if is_main_node else "")
         
         self.prompt_edit.setText(node_data.get("task_prompt", ""))
         
@@ -1292,7 +1463,7 @@ class NodePropertyEditor(QGroupBox):
         else:
             self.initial_tool_args_edit.clear()
             
-        # Data Input
+        # Data Input - RESTRICTED: Only first node in thread can edit
         self.data_in_thread_edit.setText(node_data.get("data_in_thread") or "")
         
         slice_val = node_data.get("data_in_slice")
@@ -1305,6 +1476,16 @@ class NodePropertyEditor(QGroupBox):
         else:
             self.data_in_slice_edit.clear()
             
+        # Apply restrictions
+        self.data_in_thread_edit.setEnabled(is_first_in_thread)
+        self.data_in_slice_edit.setEnabled(is_first_in_thread)
+        if not is_first_in_thread:
+            self.data_in_thread_edit.setToolTip("Only the first node of a thread can edit Data Input.")
+            self.data_in_slice_edit.setToolTip("Only the first node of a thread can edit Data Input.")
+        else:
+            self.data_in_thread_edit.setToolTip("")
+            self.data_in_slice_edit.setToolTip("")
+            
         # Data Output
         self.data_out_cb.setChecked(node_data.get("data_out", False))
         self.data_out_thread_edit.setText(node_data.get("data_out_thread") or "")
@@ -1314,12 +1495,27 @@ class NodePropertyEditor(QGroupBox):
 
     def save_node_data(self):
         if self.current_node_data is not None:
+            # Check if this is node ID 1 (protected main node)
+            is_main_node = self.current_node_data.get("id") == 1
+            
             # Check if branch (thread_id) changed
             old_thread_id = self.current_node_data.get("thread_id", "main")
-            new_thread_id = self.branch_name_edit.text().strip() or "main"
+            
+            # For ID=1 node, force thread_id to be 'main'
+            if is_main_node:
+                new_thread_id = "main"
+            else:
+                new_thread_id = self.branch_name_edit.text().strip() or "main"
+            
             branch_changed = (old_thread_id != new_thread_id)
             
-            self.current_node_data["node_name"] = self.name_edit.text()
+            # For ID=1 node, keep original name or use 'main'
+            if is_main_node:
+                # Don't change the name for protected node
+                pass
+            else:
+                self.current_node_data["node_name"] = self.name_edit.text()
+            
             self.current_node_data["node_type"] = self.type_combo.currentText()
             self.current_node_data["thread_id"] = new_thread_id
             self.current_node_data["task_prompt"] = self.prompt_edit.toPlainText()
@@ -1456,7 +1652,19 @@ class MainWindow(QMainWindow):
     
     def on_node_selected(self, node_data):
         """Handle node selection - update both property editor and context panel"""
-        self.prop_editor.load_node(node_data)
+        # Determine if this is the first node in its thread
+        all_nodes = self.graph_view.get_all_nodes_data()
+        current_tid = node_data.get("thread_id", "main")
+        current_id = node_data.get("id", 0)
+        
+        is_first = True
+        for n in all_nodes:
+            if n.get("thread_id", "main") == current_tid:
+                if n.get("id", 0) < current_id:
+                    is_first = False
+                    break
+        
+        self.prop_editor.load_node(node_data, is_first_in_thread=is_first)
         self.context_panel.load_node_context(node_data)
 
     def load_json_plan(self):
