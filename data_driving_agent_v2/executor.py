@@ -1,21 +1,14 @@
 # 执行器定义 V2
 # 支持多线程 Context 和 4 种节点类型分发
 
-from lifeprism.llm.llm_classify.tests.data_driving_agent_v2.data_driving_schemas import (
+from .data_driving_schemas import (
     Context, NodeDefinition, ExecutionPlan, NodeType, ThreadMeta
 )
 from langchain_core.messages import HumanMessage, AIMessage, ToolMessage
-from lifeprism.llm.llm_classify.utils import create_ChatTongyiModel
-from lifeprism.llm.llm_classify.tools.database_tools import (
-    get_daily_stats,
-    get_multi_days_stats,
-    query_behavior_logs,
-    query_goals,
-    query_psychological_assessment
-)
+
 from typing import Callable
-from lifeprism.utils import get_logger,DEBUG
-logger = get_logger(__name__)
+import logging
+logger = logging.getLogger(__name__)
 class Executor:
     """
     数据驱动执行器 V2
@@ -28,11 +21,6 @@ class Executor:
     
     # 默认工具调用次数限制
     DEFAULT_TOOLS_USAGE_LIMIT = {
-        "get_daily_stats": 1,
-        "get_multi_days_stats": 1,
-        "query_behavior_logs": 10,
-        "query_goals": 1,
-        "query_psychological_assessment": 1
     }
 
     def __init__(
@@ -40,6 +28,7 @@ class Executor:
         plan: ExecutionPlan, 
         user_message: str, 
         main_thread_id: str = "main",
+        tools_map: dict[str, Callable] | None = None,
         tools_limit: dict[str, int] | None = None
     ):
         self.plan = plan
@@ -57,13 +46,7 @@ class Executor:
         }
         
         # 工具映射
-        self.tools_map = {
-            "get_daily_stats": get_daily_stats,
-            "get_multi_days_stats": get_multi_days_stats,
-            "query_behavior_logs": query_behavior_logs,
-            "query_goals": query_goals,
-            "query_psychological_assessment": query_psychological_assessment
-        }
+        self.tools_map = tools_map
         
         # 工具使用限制
         self._initial_tools_limit = self.DEFAULT_TOOLS_USAGE_LIMIT.copy()
@@ -217,7 +200,7 @@ class Executor:
 
     def _create_llm_with_tools(self, tools: list[str] | None):
         """创建 LLM，如果有工具则绑定"""
-        llm = create_ChatTongyiModel(enable_search=False, enable_thinking=False)
+        llm = create_llm(enable_search=False, enable_thinking=False)
         if tools:
             tool_objects = [self.tools_map[t] for t in tools]
             llm = llm.bind_tools(tool_objects)

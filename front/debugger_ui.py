@@ -14,8 +14,10 @@ from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
                              QLineEdit, QCheckBox, QDoubleSpinBox, QTextEdit, 
                              QComboBox, QPushButton, QGraphicsView, QGraphicsScene, 
                              QGraphicsItem, QGraphicsRectItem, QGraphicsTextItem,
-                             QGraphicsLineItem, QMenu, QLabel, QFrame, QSizePolicy,
-                             QToolBar, QAction, QGraphicsDropShadowEffect, QFileDialog, QMessageBox)
+                             QGraphicsLineItem, QGraphicsPathItem, QMenu, QLabel, 
+                             QFrame, QSizePolicy, QToolBar, QAction, 
+                             QGraphicsDropShadowEffect, QFileDialog, QMessageBox,
+                             QTabWidget, QScrollArea, QTextBrowser)
 from PyQt5.QtCore import Qt, QRectF, QPointF, pyqtSignal
 from PyQt5.QtGui import QPen, QBrush, QColor, QWheelEvent, QPainter, QPainterPath, QFont
 
@@ -99,10 +101,18 @@ QGraphicsView {
 }
 QCheckBox {
     spacing: 5px;
+    color: #ffffff;
 }
 QCheckBox::indicator {
     width: 16px;
     height: 16px;
+    background-color: #2d2d2d;
+    border: 1px solid #3e3e3e;
+    border-radius: 3px;
+}
+QCheckBox::indicator:checked {
+    background-color: #4a90e2;
+    border: 1px solid #4a90e2;
 }
 """
 
@@ -113,54 +123,172 @@ NODE_COLORS = {
     "default": QColor("#616161")     # Grey
 }
 
-class LLMParamPanel(QGroupBox):
+# Thread color palette for visual distinction
+THREAD_COLORS = [
+    "#2196F3",  # Blue (typically main)
+    "#4CAF50",  # Green
+    "#FF9800",  # Orange
+    "#9C27B0",  # Purple
+    "#00BCD4",  # Cyan
+    "#E91E63",  # Pink
+    "#8BC34A",  # Light Green
+    "#FF5722",  # Deep Orange
+]
+
+class CollapsibleSection(QWidget):
+    """A collapsible section widget with a header that can be clicked to expand/collapse"""
+    def __init__(self, title="Section", parent=None):
+        super().__init__(parent)
+        self.is_collapsed = False
+        
+        # Main layout
+        self.main_layout = QVBoxLayout(self)
+        self.main_layout.setContentsMargins(0, 0, 0, 0)
+        self.main_layout.setSpacing(0)
+        
+        # Header button
+        self.toggle_button = QPushButton(f"▼ {title}")
+        self.toggle_button.setStyleSheet("""
+            QPushButton {
+                text-align: left;
+                padding: 8px;
+                background-color: #2d2d2d;
+                border: 1px solid #3e3e3e;
+                border-radius: 4px;
+                font-weight: bold;
+            }
+            QPushButton:hover {
+                background-color: #3e3e3e;
+            }
+        """)
+        self.toggle_button.clicked.connect(self.toggle)
+        self.main_layout.addWidget(self.toggle_button)
+        
+        # Content area
+        self.content_widget = QWidget()
+        self.content_layout = QVBoxLayout(self.content_widget)
+        self.content_layout.setContentsMargins(5, 5, 5, 5)
+        self.main_layout.addWidget(self.content_widget)
+    
+    def toggle(self):
+        self.is_collapsed = not self.is_collapsed
+        self.content_widget.setVisible(not self.is_collapsed)
+        # Update arrow
+        title = self.toggle_button.text()[2:]  # Remove arrow
+        arrow = "▶" if self.is_collapsed else "▼"
+        self.toggle_button.setText(f"{arrow} {title}")
+    
+    def set_content(self, widget):
+        # Clear existing content
+        while self.content_layout.count():
+            child = self.content_layout.takeAt(0)
+            if child.widget():
+                child.widget().deleteLater()
+        self.content_layout.addWidget(widget)
+
+
+class NodeContextPanel(QGroupBox):
+    """Panel to display node thread context information"""
     def __init__(self):
-        super().__init__("LLM Settings")
-        self.layout = QFormLayout()
-        self.layout.setContentsMargins(15, 20, 15, 15)
-        self.layout.setSpacing(10)
+        super().__init__("Node Context")
+        self.main_layout = QVBoxLayout()
+        self.main_layout.setContentsMargins(10, 15, 10, 10)
+        self.main_layout.setSpacing(8)
         
-        self.temp_spin = QDoubleSpinBox()
-        self.temp_spin.setRange(0.0, 2.0)
-        self.temp_spin.setSingleStep(0.1)
-        self.temp_spin.setValue(0.7)
-        self.temp_spin.setSuffix(" ")
+        # Context Messages Section
+        self.context_section = CollapsibleSection("Context Information")
+        self.context_browser = QTextBrowser()
+        self.context_browser.setMaximumHeight(200)
+        self.context_browser.setPlaceholderText("No context data available")
+        self.context_section.set_content(self.context_browser)
+        self.main_layout.addWidget(self.context_section)
         
-        self.topp_spin = QDoubleSpinBox()
-        self.topp_spin.setRange(0.0, 1.0)
-        self.topp_spin.setSingleStep(0.05)
-        self.topp_spin.setValue(0.9)
-        self.topp_spin.setSuffix(" ")
+        # LLM Input Prompt Section
+        self.prompt_section = CollapsibleSection("LLM Input Prompt")
+        self.prompt_browser = QTextBrowser()
+        self.prompt_browser.setMaximumHeight(200)
+        self.prompt_browser.setPlaceholderText("No prompt data available")
+        self.prompt_section.set_content(self.prompt_browser)
+        self.main_layout.addWidget(self.prompt_section)
         
-        self.enable_search_cb = QCheckBox("Enable Search")
-        self.enable_thinking_cb = QCheckBox("Enable Thinking")
+        # Node Output Section
+        self.output_section = CollapsibleSection("Node Output")
+        self.output_browser = QTextBrowser()
+        self.output_browser.setMaximumHeight(200)
+        self.output_browser.setPlaceholderText("No output data available")
+        self.output_section.set_content(self.output_browser)
+        self.main_layout.addWidget(self.output_section)
         
-        self.layout.addRow("Temperature:", self.temp_spin)
-        self.layout.addRow("Top-P:", self.topp_spin)
-        self.layout.addRow(self.enable_search_cb)
-        self.layout.addRow(self.enable_thinking_cb)
+        # Add stretch to push sections to top
+        self.main_layout.addStretch()
         
-        self.setLayout(self.layout)
-        # Fix height to be compact at top
-        self.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Maximum)
+        self.setLayout(self.main_layout)
+    
+    def load_node_context(self, node_data):
+        """Load and display context information for a node"""
+        # For now, just display placeholder text
+        # In the future, this will be populated with actual execution data
+        
+        node_name = node_data.get("node_name", "Unknown")
+        thread_id = node_data.get("thread_id", "main")
+        
+        # Context info
+        context_html = f"""
+        <b>Node:</b> {node_name}<br>
+        <b>Thread ID:</b> {thread_id}<br>
+        <b>Status:</b> <i>Not executed yet</i><br>
+        <br>
+        <i>Context messages will appear here during execution</i>
+        """
+        self.context_browser.setHtml(context_html)
+        
+        # Prompt info
+        prompt_html = f"""
+        <i>LLM input prompt will appear here during execution</i>
+        """
+        self.prompt_browser.setHtml(prompt_html)
+        
+        # Output info
+        output_html = f"""
+        <i>Node output will appear here after execution</i>
+        """
+        self.output_browser.setHtml(output_html)
+    
+    def clear_context(self):
+        """Clear all context information"""
+        self.context_browser.clear()
+        self.prompt_browser.clear()
+        self.output_browser.clear()
 
 class NodeItem(QGraphicsItem):
     """
     Custom Node Item with rounded corners, header, and shadow.
     """
-    def __init__(self, node_data, x=0, y=0, w=180, h=80):
+    def __init__(self, node_data, x=0, y=0, w=180, h=80, thread_color=None):
         super().__init__()
         self.setPos(x, y)
         self.width = w
         self.height = h
         self.node_data = node_data
+        self.thread_color = thread_color  # Color for thread distinction
         
+        # Output anchor for drag connections (right side)
+        self.output_anchor_rect = QRectF(self.width - 12, self.height/2 - 6, 12, 12)
+        
+        # Swap buttons (left and right arrows next to ID)
+        # These will be positioned dynamically in paint method
+        self.left_swap_rect = QRectF(0, 0, 0, 0)  # Will be set in paint
+        self.right_swap_rect = QRectF(0, 0, 0, 0)  # Will be set in paint
+        self.hover_swap_button = None  # Track which button is hovered: 'left', 'right', or None
         
         # Rule 1: Fixed positions. Disable Movable flag always.
         self.is_fixed = True 
         
         flags = QGraphicsItem.ItemIsSelectable
         # if not self.is_fixed: flags |= QGraphicsItem.ItemIsMovable # Disabled
+        
+        # Enable hover events for swap buttons
+        self.setAcceptHoverEvents(True)
             
         self.setFlags(flags)
         
@@ -168,7 +296,10 @@ class NodeItem(QGraphicsItem):
         self._update_colors()
 
     def _update_colors(self):
-        if "color" in self.node_data:
+        # Header color priority: thread_color > custom color > node type color
+        if self.thread_color:
+            self.header_color = self.thread_color
+        elif "color" in self.node_data:
             self.header_color = QColor(self.node_data["color"])
         else:
             ntype = self.node_data.get("node_type", "default")
@@ -179,7 +310,15 @@ class NodeItem(QGraphicsItem):
         self.subtext_color = QColor("#b0b0b0")
 
     def boundingRect(self):
-        return QRectF(0, 0, self.width, self.height)
+        return QRectF(-2, -2, self.width + 4, self.height + 4)
+
+    def get_output_anchor_center(self) -> QPointF:
+        """Get the center of output anchor in scene coordinates"""
+        return self.mapToScene(self.output_anchor_rect.center())
+    
+    def get_input_point(self) -> QPointF:
+        """Get the input connection point (left side)"""
+        return self.mapToScene(QPointF(0, self.height / 2))
 
     def paint(self, painter, option, widget):
         # Update color in case data changed
@@ -188,9 +327,9 @@ class NodeItem(QGraphicsItem):
         path = QPainterPath()
         path.addRoundedRect(0, 0, self.width, self.height, 8, 8)
         
-        # Draw Shadow/Selection
+        # Border: black by default, blue when selected
         if self.isSelected():
-            painter.setPen(QPen(QColor("#4a90e2"), 2))
+            painter.setPen(QPen(QColor("#4a90e2"), 3))
         else:
             painter.setPen(QPen(QColor("#111111"), 1))
             
@@ -234,14 +373,209 @@ class NodeItem(QGraphicsItem):
         painter.drawText(QRectF(10, text_y_start, self.width - 20, 20),
                          Qt.AlignLeft, type_text)
         
-        # Draw ID
-        id_text = f"ID: {self.node_data.get('id', '?')}"
-        painter.drawText(QRectF(10, text_y_start + 15, self.width - 20, 20),
-                         Qt.AlignLeft, id_text)
+        # Draw ID with swap buttons
+        node_id = self.node_data.get('id', '?')
+        thread_id = self.node_data.get('thread_id', 'main')
+        
+        # Calculate button positions
+        button_size = 14
+        button_y = text_y_start + 15
+        
+        # Left arrow button (only show if ID > 1)
+        if isinstance(node_id, int) and node_id > 1:
+            self.left_swap_rect = QRectF(10, button_y, button_size, button_size)
+            # Draw button background
+            if self.hover_swap_button == 'left':
+                painter.setBrush(QColor("#4a90e2"))
+            else:
+                painter.setBrush(QColor("#3e3e3e"))
+            painter.setPen(QPen(QColor("#555555"), 1))
+            painter.drawRoundedRect(self.left_swap_rect, 3, 3)
+            
+            # Draw left arrow
+            painter.setPen(QPen(QColor("#ffffff"), 2))
+            arrow_center_x = self.left_swap_rect.center().x()
+            arrow_center_y = self.left_swap_rect.center().y()
+            painter.drawLine(int(arrow_center_x + 2), int(arrow_center_y),
+                           int(arrow_center_x - 2), int(arrow_center_y))
+            painter.drawLine(int(arrow_center_x - 2), int(arrow_center_y),
+                           int(arrow_center_x), int(arrow_center_y - 3))
+            painter.drawLine(int(arrow_center_x - 2), int(arrow_center_y),
+                           int(arrow_center_x), int(arrow_center_y + 3))
+        else:
+            self.left_swap_rect = QRectF(0, 0, 0, 0)
+        
+        # ID text
+        id_x_offset = 10 + (button_size + 4 if isinstance(node_id, int) and node_id > 1 else 0)
+        id_text = f"ID: {node_id}"
+        painter.setPen(self.subtext_color)
+        painter.setFont(font_small)
+        id_text_rect = QRectF(id_x_offset, button_y, 50, button_size)
+        painter.drawText(id_text_rect, Qt.AlignLeft | Qt.AlignVCenter, id_text)
+        
+        # Right arrow button (always show, will check validity on click)
+        right_button_x = id_x_offset + 52
+        self.right_swap_rect = QRectF(right_button_x, button_y, button_size, button_size)
+        # Draw button background
+        if self.hover_swap_button == 'right':
+            painter.setBrush(QColor("#4a90e2"))
+        else:
+            painter.setBrush(QColor("#3e3e3e"))
+        painter.setPen(QPen(QColor("#555555"), 1))
+        painter.drawRoundedRect(self.right_swap_rect, 3, 3)
+        
+        # Draw right arrow
+        painter.setPen(QPen(QColor("#ffffff"), 2))
+        arrow_center_x = self.right_swap_rect.center().x()
+        arrow_center_y = self.right_swap_rect.center().y()
+        painter.drawLine(int(arrow_center_x - 2), int(arrow_center_y),
+                       int(arrow_center_x + 2), int(arrow_center_y))
+        painter.drawLine(int(arrow_center_x + 2), int(arrow_center_y),
+                       int(arrow_center_x), int(arrow_center_y - 3))
+        painter.drawLine(int(arrow_center_x + 2), int(arrow_center_y),
+                       int(arrow_center_x), int(arrow_center_y + 3))
+        
+        # Thread ID text (after buttons)
+        thread_x_offset = right_button_x + button_size + 4
+        painter.setPen(self.subtext_color)
+        painter.drawText(QRectF(thread_x_offset, button_y, self.width - thread_x_offset - 10, button_size),
+                         Qt.AlignLeft | Qt.AlignVCenter, f"| {thread_id}")
+        
+        # Draw output anchor (green circle)
+        painter.setBrush(QColor("#4CAF50"))
+        painter.setPen(QPen(QColor("#2E7D32"), 1))
+        painter.drawEllipse(self.output_anchor_rect)
+
 
     def mouseDoubleClickEvent(self, event):
         super().mouseDoubleClickEvent(event)
-        # Signal to edit this node - Logic handled by view/scene finding selection
+    
+    def hoverMoveEvent(self, event):
+        """Track hover over swap buttons"""
+        local_pos = event.pos()
+        
+        old_hover = self.hover_swap_button
+        
+        if self.left_swap_rect.contains(local_pos):
+            self.hover_swap_button = 'left'
+        elif self.right_swap_rect.contains(local_pos):
+            self.hover_swap_button = 'right'
+        else:
+            self.hover_swap_button = None
+        
+        # Repaint if hover state changed
+        if old_hover != self.hover_swap_button:
+            self.update()
+        
+        super().hoverMoveEvent(event)
+    
+    def hoverLeaveEvent(self, event):
+        """Clear hover state when mouse leaves"""
+        if self.hover_swap_button is not None:
+            self.hover_swap_button = None
+            self.update()
+        super().hoverLeaveEvent(event)
+
+
+class ConnectionLine(QGraphicsPathItem):
+    """
+    Connection line between nodes.
+    
+    Types:
+    - thread: Same thread sequential connection (solid line)
+    - data_in: Data input connection (dashed line)
+    - data_out: Data output to merge node (dashed line)
+    """
+    def __init__(self, start_item, end_item, connection_type="thread", color=None):
+        super().__init__()
+        self.start_item = start_item
+        self.end_item = end_item
+        self.connection_type = connection_type
+        self.line_color = color or QColor("#666666")
+        
+        self._update_path()
+        self._update_style()
+        self.setZValue(-1)  # Behind nodes
+    
+    def _update_style(self):
+        if self.connection_type == "thread":
+            pen = QPen(self.line_color, 2, Qt.SolidLine)
+        else:  # data_in or data_out
+            pen = QPen(self.line_color, 2, Qt.DashLine)
+        pen.setCapStyle(Qt.RoundCap)
+        self.setPen(pen)
+    
+    def _update_path(self):
+        path = QPainterPath()
+        
+        if isinstance(self.start_item, NodeItem):
+            start_pos = self.start_item.get_output_anchor_center()
+        else:
+            start_pos = self.start_item.get_output_point()
+            
+        if isinstance(self.end_item, NodeItem):
+            end_pos = self.end_item.get_input_point()
+        else:
+            end_pos = self.end_item.get_input_point()
+        
+        # Bezier curve for smooth connection
+        path.moveTo(start_pos)
+        ctrl_offset = abs(end_pos.x() - start_pos.x()) / 2
+        ctrl1 = QPointF(start_pos.x() + ctrl_offset, start_pos.y())
+        ctrl2 = QPointF(end_pos.x() - ctrl_offset, end_pos.y())
+        path.cubicTo(ctrl1, ctrl2, end_pos)
+        
+        self.setPath(path)
+    
+    def update_position(self):
+        self._update_path()
+
+
+class MergeNodeItem(QGraphicsItem):
+    """
+    Merge node (+) - Virtual display node showing where child thread data merges to parent.
+    This is not a real node, just a visual indicator.
+    """
+    def __init__(self, x, y, parent_thread_id, child_thread_id, color=None):
+        super().__init__()
+        self.setPos(x, y)
+        self.size = 36
+        self.parent_thread_id = parent_thread_id
+        self.child_thread_id = child_thread_id
+        self.color = color or QColor("#4CAF50")
+        self.setZValue(0)
+    
+    def boundingRect(self):
+        return QRectF(-2, -2, self.size + 4, self.size + 4)
+    
+    def get_input_point(self) -> QPointF:
+        """Get the input connection point"""
+        return self.mapToScene(QPointF(0, self.size / 2))
+    
+    def get_output_point(self) -> QPointF:
+        """Get the output connection point"""
+        return self.mapToScene(QPointF(self.size, self.size / 2))
+    
+    def paint(self, painter, option, widget):
+        # Draw circle background
+        painter.setBrush(self.color)
+        painter.setPen(QPen(self.color.darker(120), 2))
+        painter.drawEllipse(0, 0, self.size, self.size)
+        
+        # Draw + sign
+        painter.setPen(QPen(QColor("#ffffff"), 3))
+        center = self.size / 2
+        margin = 8
+        painter.drawLine(int(center), int(margin), int(center), int(self.size - margin))
+        painter.drawLine(int(margin), int(center), int(self.size - margin), int(center))
+        
+        # Draw label below
+        painter.setPen(QColor("#b0b0b0"))
+        font = QFont("Segoe UI", 7)
+        painter.setFont(font)
+        painter.drawText(QRectF(-20, self.size + 2, self.size + 40, 15),
+                        Qt.AlignCenter, f"← {self.child_thread_id}")
+
 
 class NodeGraphScene(QGraphicsScene):
     def __init__(self, parent=None):
@@ -249,6 +583,8 @@ class NodeGraphScene(QGraphicsScene):
         self.setSceneRect(-2500, -2500, 5000, 5000)
         self.grid_size = 20
         self.grid_color = QColor("#2d2d2d")
+        self.connection_lines = []
+        self.merge_nodes = []
 
     def drawBackground(self, painter, rect):
         # Fill background
@@ -282,8 +618,16 @@ class NodeGraphView(QGraphicsView):
         self.next_node_id = 1
         self.node_gap_x = 220
         
+        # Thread color management
+        self.thread_color_map = {}  # thread_id -> QColor
+        
+        # Drag connection state
+        self.dragging_connection = False
+        self.drag_start_item = None
+        self.drag_temp_line = None
+        
         # Test Data
-        self.add_node({"node_name": "Start", "node_type": "llm-first", "task_prompt": "Start task", "fixed": True}, 0, 0)
+        self.add_node({"node_name": "Start", "node_type": "llm-first", "thread_id": "main", "task_prompt": "Start task", "fixed": True}, 0, 0)
         self.centerOn(0, 0)
         
         # Add overlay button
@@ -316,6 +660,96 @@ class NodeGraphView(QGraphicsView):
         shadow.setColor(QColor(0, 0, 0, 100))
         shadow.setOffset(0, 4)
         self.add_btn.setGraphicsEffect(shadow)
+
+    def get_thread_color(self, thread_id: str) -> QColor:
+        """Get or create a color for a thread_id"""
+        if thread_id not in self.thread_color_map:
+            idx = len(self.thread_color_map)
+            color_hex = THREAD_COLORS[idx % len(THREAD_COLORS)]
+            self.thread_color_map[thread_id] = QColor(color_hex)
+        return self.thread_color_map[thread_id]
+    
+    def update_connections(self):
+        """Rebuild all connection lines based on current nodes"""
+        # Clear existing connections
+        for line in self.scene.connection_lines:
+            self.scene.removeItem(line)
+        self.scene.connection_lines.clear()
+        
+        for merge in self.scene.merge_nodes:
+            self.scene.removeItem(merge)
+        self.scene.merge_nodes.clear()
+        
+        # Get all nodes sorted by ID
+        nodes = [i for i in self.scene.items() if isinstance(i, NodeItem)]
+        nodes.sort(key=lambda n: n.node_data.get("id", 0))
+        
+        # Build node lookup by id
+        node_by_id = {n.node_data.get("id"): n for n in nodes}
+        
+        # Group nodes by thread_id
+        threads = {}
+        for node in nodes:
+            tid = node.node_data.get("thread_id", "main")
+            if tid not in threads:
+                threads[tid] = []
+            threads[tid].append(node)
+        
+        # Draw same-thread connections (solid lines)
+        for tid, thread_nodes in threads.items():
+            thread_nodes.sort(key=lambda n: n.node_data.get("id", 0))
+            color = self.get_thread_color(tid)
+            
+            for i in range(len(thread_nodes) - 1):
+                start_node = thread_nodes[i]
+                end_node = thread_nodes[i + 1]
+                line = ConnectionLine(start_node, end_node, "thread", color)
+                self.scene.addItem(line)
+                self.scene.connection_lines.append(line)
+        
+        # Draw data_in connections (dashed lines) and merge nodes for data_out
+        for node in nodes:
+            # data_in connection
+            data_in_thread = node.node_data.get("data_in_thread")
+            if data_in_thread and data_in_thread in threads:
+                source_nodes = threads[data_in_thread]
+                target_id = node.node_data.get("id", 0)
+                # Find the last node in source thread that has id < target_id
+                valid_sources = [n for n in source_nodes if n.node_data.get("id", 0) < target_id]
+                if valid_sources:
+                    # Connect from the last valid source node
+                    source_node = max(valid_sources, key=lambda n: n.node_data.get("id", 0))
+                    line = ConnectionLine(source_node, node, "data_in", 
+                                         self.get_thread_color(data_in_thread))
+                    self.scene.addItem(line)
+                    self.scene.connection_lines.append(line)
+            
+            # data_out - create merge node on parent thread
+            if node.node_data.get("data_out"):
+                parent_tid = node.node_data.get("parent_thread_id", "main")
+                child_tid = node.node_data.get("thread_id", "main")
+                
+                if parent_tid and parent_tid != child_tid and parent_tid in threads:
+                    # Place merge node at appropriate X position (after this node)
+                    merge_x = node.x() + self.node_gap_x / 2
+                    # Y position on parent thread (Y=0 for main)
+                    parent_y = 0
+                    if threads[parent_tid]:
+                        parent_y = threads[parent_tid][0].y()
+                    
+                    merge_node = MergeNodeItem(
+                        merge_x, parent_y + 20,
+                        parent_tid, child_tid,
+                        self.get_thread_color(child_tid)
+                    )
+                    self.scene.addItem(merge_node)
+                    self.scene.merge_nodes.append(merge_node)
+                    
+                    # Draw line from node to merge node
+                    line = ConnectionLine(node, merge_node, "data_out",
+                                         self.get_thread_color(child_tid))
+                    self.scene.addItem(line)
+                    self.scene.connection_lines.append(line)
         
     def get_all_nodes_data(self):
         nodes = []
@@ -384,6 +818,26 @@ class NodeGraphView(QGraphicsView):
             
             # X is determined by ID in add_node
             self.add_node(node, 0, y)
+        
+        # Draw connections after all nodes are placed
+        self.update_connections()
+    
+    def update_node_color(self, node_data):
+        """Update the color of a specific node when its thread_id changes"""
+        # Find the node item with matching data
+        nodes = [i for i in self.scene.items() if isinstance(i, NodeItem)]
+        for node in nodes:
+            if node.node_data.get("id") == node_data.get("id"):
+                # Get new thread color
+                thread_id = node_data.get("thread_id", "main")
+                new_color = self.get_thread_color(thread_id)
+                node.thread_color = new_color
+                # Force repaint
+                node.update()
+                break
+        
+        # Update all connections since thread relationships may have changed
+        self.update_connections()
 
     def add_node(self, node_data, x, y, force_id=None):
         # Enforce ID
@@ -401,13 +855,20 @@ class NodeGraphView(QGraphicsView):
         
         node_data["id"] = node_id
         
+        # Ensure thread_id exists
+        if "thread_id" not in node_data:
+            node_data["thread_id"] = "main"
+        
         # Enforce X Coordinate based on ID
         # ID 1 -> 0
         # ID 2 -> GAP
         # ...
         calculated_x = (node_id - 1) * self.node_gap_x
         
-        item = NodeItem(node_data, calculated_x, y)
+        # Get thread color
+        thread_color = self.get_thread_color(node_data["thread_id"])
+        
+        item = NodeItem(node_data, calculated_x, y, thread_color=thread_color)
         self.scene.addItem(item)
     
     def wheelEvent(self, event: QWheelEvent):
@@ -421,13 +882,86 @@ class NodeGraphView(QGraphicsView):
         self.scale(zoomFactor, zoomFactor)
 
     def mousePressEvent(self, event):
-        super().mousePressEvent(event)
         item = self.itemAt(event.pos())
+        
+        # Check if clicking on swap buttons or output anchor of a NodeItem
         if isinstance(item, NodeItem):
-            self.nodeSelected.emit(item.node_data)
-        else:
-            # If clicked on empty space, maybe clear selection?
-            pass
+            local_pos = item.mapFromScene(self.mapToScene(event.pos()))
+            
+            # Check swap buttons first (higher priority than anchor)
+            if item.left_swap_rect.contains(local_pos):
+                # Swap with left neighbor
+                self.swap_nodes(item, -1)
+                return
+            elif item.right_swap_rect.contains(local_pos):
+                # Swap with right neighbor
+                self.swap_nodes(item, 1)
+                return
+            elif item.output_anchor_rect.contains(local_pos):
+                # Start connection drag
+                self.dragging_connection = True
+                self.drag_start_item = item
+                self.drag_temp_line = QGraphicsLineItem()
+                self.drag_temp_line.setPen(QPen(QColor("#4CAF50"), 2, Qt.DashLine))
+                self.drag_temp_line.setZValue(10)
+                self.scene.addItem(self.drag_temp_line)
+                start_pos = item.get_output_anchor_center()
+                self.drag_temp_line.setLine(start_pos.x(), start_pos.y(),
+                                           start_pos.x(), start_pos.y())
+                return
+            else:
+                self.nodeSelected.emit(item.node_data)
+        
+        super().mousePressEvent(event)
+    
+    def mouseMoveEvent(self, event):
+        if self.dragging_connection and self.drag_temp_line:
+            start_pos = self.drag_start_item.get_output_anchor_center()
+            end_pos = self.mapToScene(event.pos())
+            self.drag_temp_line.setLine(start_pos.x(), start_pos.y(),
+                                       end_pos.x(), end_pos.y())
+            return
+        super().mouseMoveEvent(event)
+    
+    def mouseReleaseEvent(self, event):
+        if self.dragging_connection:
+            # Hide temp line to find actual item underneath
+            if self.drag_temp_line:
+                self.drag_temp_line.hide()
+            
+            # Find target node at release position
+            scene_pos = self.mapToScene(event.pos())
+            items_at_pos = self.scene.items(scene_pos)
+            target = None
+            for item in items_at_pos:
+                if isinstance(item, NodeItem) and item != self.drag_start_item:
+                    target = item
+                    break
+            
+            if target:
+                # Validate: source.id < target.id
+                source_id = self.drag_start_item.node_data.get("id", 0)
+                target_id = target.node_data.get("id", 0)
+                
+                if source_id < target_id:
+                    # Create data_in connection
+                    source_thread = self.drag_start_item.node_data.get("thread_id", "main")
+                    target.node_data["data_in_thread"] = source_thread
+                    target.node_data["data_in_slice"] = (-1, None)  # Default: last message
+                    print(f"Created connection: {source_thread} -> Node {target_id}")
+                    self.update_connections()
+                else:
+                    print(f"Invalid connection: source ID ({source_id}) must be < target ID ({target_id})")
+            
+            # Clean up drag state
+            if self.drag_temp_line:
+                self.scene.removeItem(self.drag_temp_line)
+                self.drag_temp_line = None
+            self.dragging_connection = False
+            self.drag_start_item = None
+            return
+        
+        super().mouseReleaseEvent(event)
 
     def contextMenuEvent(self, event):
         item = self.itemAt(event.pos())
@@ -448,38 +982,104 @@ class NodeGraphView(QGraphicsView):
                 self.delete_node(item)
 
     def add_new_node_from(self, parent_item):
-        # Extension: Same Y level
+        # Extension: Same Y level, same thread
         new_y = parent_item.y()
-        
-        # X is auto-calc in add_node
+        parent_thread = parent_item.node_data.get("thread_id", "main")
         
         new_data = {
             "node_name": "New Node", 
             "node_type": "llm-first", 
+            "thread_id": parent_thread,
             "task_prompt": "New task...",
             "parent_id": parent_item.node_data.get("id")
         }
         self.add_node(new_data, 0, new_y)
+        self.update_connections()
 
     def add_branch_from(self, parent_item):
         # Branch: Position UPWARDS (negative Y in Qt)
         new_y = parent_item.y() - 120
+        parent_thread = parent_item.node_data.get("thread_id", "main")
         
-        # Rule 2: Unique color for branch point
-        # Generate a random hue, keeping saturation/value high for visibility
-        rand_color = QColor.fromHsv(random.randint(0, 359), 200, 200).name()
+        # Create new thread id for branch
+        new_thread_id = f"branch_{self.next_node_id}"
         
         new_data = {
             "node_name": "Branch", 
-            "node_type": "planning", 
-            "task_prompt": "Branch logic...",
+            "node_type": "llm-first",
+            "thread_id": new_thread_id,
+            "parent_thread_id": parent_thread,
+            "task_prompt": "Branch task...",
             "parent_id": parent_item.node_data.get("id"),
-            "color": rand_color
         }
         self.add_node(new_data, 0, new_y)
+        self.update_connections()
 
     def delete_node(self, item):
+        deleted_id = item.node_data.get("id", 0)
         self.scene.removeItem(item)
+        
+        # Renumber all nodes with ID > deleted_id
+        nodes = [i for i in self.scene.items() if isinstance(i, NodeItem)]
+        for node in nodes:
+            node_id = node.node_data.get("id", 0)
+            if node_id > deleted_id:
+                new_id = node_id - 1
+                node.node_data["id"] = new_id
+                # Recalculate X position based on new ID
+                node.setPos((new_id - 1) * self.node_gap_x, node.y())
+        
+        # Decrement next_node_id counter
+        self.next_node_id = max(1, self.next_node_id - 1)
+        
+        self.update_connections()
+    
+    def swap_nodes(self, item, direction):
+        """
+        Swap node with its neighbor.
+        
+        Args:
+            item: The NodeItem to swap
+            direction: -1 for left swap, 1 for right swap
+        """
+        current_id = item.node_data.get("id", 0)
+        target_id = current_id + direction
+        
+        # Validate target ID
+        if target_id < 1:
+            print(f"Cannot swap: target ID {target_id} is invalid (must be >= 1)")
+            return
+        
+        # Get all nodes
+        nodes = [i for i in self.scene.items() if isinstance(i, NodeItem)]
+        
+        # Find target node
+        target_node = None
+        for node in nodes:
+            if node.node_data.get("id") == target_id:
+                target_node = node
+                break
+        
+        if not target_node:
+            print(f"Cannot swap: no node found with ID {target_id}")
+            return
+        
+        # Swap IDs
+        item.node_data["id"] = target_id
+        target_node.node_data["id"] = current_id
+        
+        # Recalculate positions based on new IDs
+        item.setPos((target_id - 1) * self.node_gap_x, item.y())
+        target_node.setPos((current_id - 1) * self.node_gap_x, target_node.y())
+        
+        # Force repaint
+        item.update()
+        target_node.update()
+        
+        # Update all connections
+        self.update_connections()
+        
+        print(f"Swapped nodes: {current_id} ↔ {target_id}")
 
     def add_node_at_center(self):
         # Always add to main axis Y=0
@@ -491,18 +1091,30 @@ class NodeGraphView(QGraphicsView):
         self.add_node(new_data, 0, 0)
 
 class NodePropertyEditor(QGroupBox):
+    nodeDataChanged = pyqtSignal()  # Signal emitted when node data is saved
+    branchChanged = pyqtSignal(dict)  # Signal emitted when branch (thread_id) is changed
+    
     def __init__(self):
         super().__init__("Node Properties")
         
-        # Main Layout (Vertical) to hold Columns and Save Button
+        # Main Layout
         self.main_layout = QVBoxLayout()
         self.main_layout.setContentsMargins(15, 20, 15, 15)
         self.main_layout.setSpacing(10)
         
-        # Horizontal container for two columns
+        # Create Tab Widget
+        self.tab_widget = QTabWidget()
+        self.main_layout.addWidget(self.tab_widget)
+        
+        # --- Node Setting Tab ---
+        self.node_setting_tab = QWidget()
+        node_setting_layout = QVBoxLayout(self.node_setting_tab)
+        node_setting_layout.setContentsMargins(10, 10, 10, 10)
+        
+        # Horizontal container for two columns in node setting
         self.columns_layout = QHBoxLayout()
         self.columns_layout.setSpacing(20)
-        self.main_layout.addLayout(self.columns_layout)
+        node_setting_layout.addLayout(self.columns_layout)
         
         # Left Column Form
         self.left_form = QFormLayout()
@@ -521,6 +1133,10 @@ class NodePropertyEditor(QGroupBox):
         self.name_edit = QLineEdit()
         self.type_combo = QComboBox()
         self.type_combo.addItems(list(ALL_NODE_TYPES))
+        
+        # --- Branch Settings ---
+        self.branch_name_edit = QLineEdit()
+        self.branch_name_edit.setPlaceholderText("Branch name (thread_id)")
         
         # --- LLM Config ---
         self.prompt_edit = QTextEdit()
@@ -550,20 +1166,20 @@ class NodePropertyEditor(QGroupBox):
 
         # --- Data Flow Output ---
         self.data_out_cb = QCheckBox("Output Data to Parent")
+        self.data_out_thread_edit = QLineEdit()
+        self.data_out_thread_edit.setPlaceholderText("Target Thread ID (defaults to parent_thread_id)")
         self.desc_edit = QLineEdit()
         self.desc_edit.setPlaceholderText("Description of output data")
-
-        self.save_btn = QPushButton("Save Changes")
-        self.save_btn.clicked.connect(self.save_node_data)
         
         # Connect type change to visibility toggle
         self.type_combo.currentTextChanged.connect(self.update_field_visibility)
         
-        # --- Layout Assembly ---
+        # --- Layout Assembly for Node Setting Tab ---
         
         # LEFT COLUMN
         self.left_form.addRow("Name:", self.name_edit)
         self.left_form.addRow("Type:", self.type_combo)
+        self.left_form.addRow("Branch:", self.branch_name_edit)
         self.left_form.addRow("Task Prompt:", self.prompt_edit)
         self.left_form.addRow("Tools:", self.tools_edit)
         self.left_form.addRow("", self.enable_tool_loop_cb)
@@ -583,9 +1199,46 @@ class NodePropertyEditor(QGroupBox):
         # Data Output Section
         self.right_form.addRow(QLabel("--- Data Output ---"))
         self.right_form.addRow("", self.data_out_cb)
+        self.right_form.addRow("Out Thread:", self.data_out_thread_edit)
         self.right_form.addRow("Out Desc:", self.desc_edit)
         
-        # Add Save Button to Main Layout (at bottom)
+        # --- LLM Setting Tab ---
+        self.llm_setting_tab = QWidget()
+        llm_setting_layout = QFormLayout(self.llm_setting_tab)
+        llm_setting_layout.setContentsMargins(15, 20, 15, 15)
+        llm_setting_layout.setSpacing(10)
+        
+        # LLM Parameters
+        self.temp_spin = QDoubleSpinBox()
+        self.temp_spin.setRange(0.0, 2.0)
+        self.temp_spin.setSingleStep(0.1)
+        self.temp_spin.setValue(0.7)
+        self.temp_spin.setSuffix(" ")
+        
+        self.topp_spin = QDoubleSpinBox()
+        self.topp_spin.setRange(0.0, 1.0)
+        self.topp_spin.setSingleStep(0.05)
+        self.topp_spin.setValue(0.9)
+        self.topp_spin.setSuffix(" ")
+        
+        self.enable_search_cb = QCheckBox("Enable Search")
+        self.enable_thinking_cb = QCheckBox("Enable Thinking")
+        
+        llm_setting_layout.addRow("Temperature:", self.temp_spin)
+        llm_setting_layout.addRow("Top-P:", self.topp_spin)
+        llm_setting_layout.addRow(self.enable_search_cb)
+        llm_setting_layout.addRow(self.enable_thinking_cb)
+        
+        # Add stretch to push fields to top
+        llm_setting_layout.addRow(QWidget())  # Spacer
+        
+        # Add tabs to tab widget
+        self.tab_widget.addTab(self.node_setting_tab, "Node Setting")
+        self.tab_widget.addTab(self.llm_setting_tab, "LLM Setting")
+        
+        # Save Button
+        self.save_btn = QPushButton("Save Changes")
+        self.save_btn.clicked.connect(self.save_node_data)
         self.main_layout.addWidget(self.save_btn)
         
         self.setLayout(self.main_layout)
@@ -617,6 +1270,9 @@ class NodePropertyEditor(QGroupBox):
         if ntype == "llm_auto": ntype = "llm-first"
         if ntype == "tool": ntype = "tool-first"
         self.type_combo.setCurrentText(ntype)
+        
+        # Load branch name (thread_id)
+        self.branch_name_edit.setText(node_data.get("thread_id", "main"))
         
         self.prompt_edit.setText(node_data.get("task_prompt", ""))
         
@@ -651,14 +1307,21 @@ class NodePropertyEditor(QGroupBox):
             
         # Data Output
         self.data_out_cb.setChecked(node_data.get("data_out", False))
+        self.data_out_thread_edit.setText(node_data.get("data_out_thread") or "")
         self.desc_edit.setText(node_data.get("data_out_description", ""))
             
         self.update_field_visibility(ntype)
 
     def save_node_data(self):
         if self.current_node_data is not None:
+            # Check if branch (thread_id) changed
+            old_thread_id = self.current_node_data.get("thread_id", "main")
+            new_thread_id = self.branch_name_edit.text().strip() or "main"
+            branch_changed = (old_thread_id != new_thread_id)
+            
             self.current_node_data["node_name"] = self.name_edit.text()
             self.current_node_data["node_type"] = self.type_combo.currentText()
+            self.current_node_data["thread_id"] = new_thread_id
             self.current_node_data["task_prompt"] = self.prompt_edit.toPlainText()
             
             tools_str = self.tools_edit.text()
@@ -704,15 +1367,20 @@ class NodePropertyEditor(QGroupBox):
 
             # Data Output
             self.current_node_data["data_out"] = self.data_out_cb.isChecked()
+            self.current_node_data["data_out_thread"] = self.data_out_thread_edit.text() or None
             self.current_node_data["data_out_description"] = self.desc_edit.text()
             
             print(f"Saved Node: {self.current_node_data}")
-            pass
+            self.nodeDataChanged.emit()  # Notify graph to update connections
+            
+            # If branch changed, emit signal to update node color
+            if branch_changed:
+                self.branchChanged.emit(self.current_node_data)
 
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Data Driven Agent Debugger (Dark Mode)")
+        self.setWindowTitle("Simple LLM Playground")
         self.resize(1300, 850)
         
         # Apply Stylesheet
@@ -736,9 +1404,8 @@ class MainWindow(QMainWindow):
         left_layout.setContentsMargins(10, 10, 10, 10)
         left_layout.setSpacing(10)
         
-        self.left_panel = LLMParamPanel()
-        left_layout.addWidget(self.left_panel)
-        left_layout.addStretch() # Push panel to top
+        self.context_panel = NodeContextPanel()
+        left_layout.addWidget(self.context_panel)
         
         self.main_splitter.addWidget(left_container)
         
@@ -761,7 +1428,9 @@ class MainWindow(QMainWindow):
         self.right_splitter.addWidget(prop_container)
         
         # Connect signals
-        self.graph_view.nodeSelected.connect(self.prop_editor.load_node)
+        self.graph_view.nodeSelected.connect(self.on_node_selected)
+        self.prop_editor.nodeDataChanged.connect(self.graph_view.update_connections)
+        self.prop_editor.branchChanged.connect(self.graph_view.update_node_color)
         
         # Set initial sizes
         self.main_splitter.setSizes([300, 1000])
@@ -784,6 +1453,11 @@ class MainWindow(QMainWindow):
         save_action = QAction("Save JSON Plan", self)
         save_action.triggered.connect(self.save_json_plan)
         toolbar.addAction(save_action)
+    
+    def on_node_selected(self, node_data):
+        """Handle node selection - update both property editor and context panel"""
+        self.prop_editor.load_node(node_data)
+        self.context_panel.load_node_context(node_data)
 
     def load_json_plan(self):
         file_name, _ = QFileDialog.getOpenFileName(self, "Open Plan JSON", "", "JSON Files (*.json)")
