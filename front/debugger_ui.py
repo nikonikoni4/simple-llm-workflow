@@ -21,6 +21,9 @@ from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
 from PyQt5.QtCore import Qt, QRectF, QPointF, pyqtSignal
 from PyQt5.QtGui import QPen, QBrush, QColor, QWheelEvent, QPainter, QPainterPath, QFont
 
+# Import execution control panel
+from execution_panel import ExecutionControlPanel
+
 # Import schemas to ensure we match the data structure
 # Adjust import path if needed based on execution context
 try:
@@ -259,6 +262,88 @@ class NodeContextPanel(QGroupBox):
         self.context_browser.clear()
         self.prompt_browser.clear()
         self.output_browser.clear()
+    
+    def load_node_context_from_api(self, context_data: dict):
+        """
+        Load and display context information from API response
+        
+        Args:
+            context_data: Dict containing node_id, node_name, thread_id,
+                         thread_messages_before, thread_messages_after,
+                         llm_input, llm_output, tool_calls, data_out_content
+        """
+        node_name = context_data.get("node_name", "Unknown")
+        node_id = context_data.get("node_id", "?")
+        thread_id = context_data.get("thread_id", "main")
+        
+        # Format context messages
+        messages_before = context_data.get("thread_messages_before", [])
+        messages_after = context_data.get("thread_messages_after", [])
+        
+        context_html = f"""
+        <b>Node:</b> {node_name} (ID: {node_id})<br>
+        <b>Thread ID:</b> {thread_id}<br>
+        <b>Status:</b> <span style="color: #4CAF50;">✓ Executed</span><br><br>
+        <b>Messages Before Execution:</b>
+        <div style="background-color: #2d2d2d; padding: 8px; margin: 4px 0; border-radius: 4px;">
+        """
+        
+        if messages_before:
+            for msg in messages_before:
+                role = msg.get("role", "unknown")
+                content = msg.get("content", "")[:200]  # Truncate for preview
+                role_color = "#4CAF50" if role == "assistant" else "#2196F3"
+                context_html += f'<span style="color: {role_color};">[{role}]</span> {content}<br>'
+        else:
+            context_html += "<i>No messages</i>"
+        
+        context_html += "</div>"
+        self.context_browser.setHtml(context_html)
+        
+        # LLM Input Prompt
+        llm_input = context_data.get("llm_input", "")
+        prompt_html = f"""
+        <div style="background-color: #2d2d2d; padding: 8px; border-radius: 4px; white-space: pre-wrap;">
+        {llm_input if llm_input else '<i>No LLM input</i>'}
+        </div>
+        """
+        self.prompt_browser.setHtml(prompt_html)
+        
+        # Node Output (LLM output + tool calls)
+        llm_output = context_data.get("llm_output", "")
+        tool_calls = context_data.get("tool_calls", [])
+        data_out = context_data.get("data_out_content")
+        
+        output_html = f"""
+        <b>LLM Output:</b>
+        <div style="background-color: #2d2d2d; padding: 8px; margin: 4px 0; border-radius: 4px; white-space: pre-wrap;">
+        {llm_output if llm_output else '<i>No LLM output</i>'}
+        </div>
+        """
+        
+        if tool_calls:
+            output_html += "<br><b>Tool Calls:</b>"
+            for tc in tool_calls:
+                tool_name = tc.get("name", "unknown")
+                tool_args = tc.get("args", {})
+                tool_result = tc.get("result", "")
+                output_html += f"""
+                <div style="background-color: #3d3d2d; padding: 8px; margin: 4px 0; border-radius: 4px;">
+                <span style="color: #FFC107;">🔧 {tool_name}</span><br>
+                <b>Args:</b> {tool_args}<br>
+                <b>Result:</b> {str(tool_result)[:100]}...
+                </div>
+                """
+        
+        if data_out:
+            output_html += f"""
+            <br><b>Data Output:</b>
+            <div style="background-color: #2d3d2d; padding: 8px; margin: 4px 0; border-radius: 4px;">
+            {data_out}
+            </div>
+            """
+        
+        self.output_browser.setHtml(output_html)
 
 class NodeItem(QGraphicsItem):
     """
@@ -291,6 +376,15 @@ class NodeItem(QGraphicsItem):
         self.setAcceptHoverEvents(True)
             
         self.setFlags(flags)
+        
+        # Execution status tracking
+        self.execution_status = "pending"  # pending/running/completed/failed
+        self.STATUS_COLORS = {
+            "pending": QColor("#666666"),
+            "running": QColor("#FFC107"),
+            "completed": QColor("#4CAF50"),
+            "failed": QColor("#F44336")
+        }
         
         # Cache colors
         self._update_colors()
@@ -445,6 +539,34 @@ class NodeItem(QGraphicsItem):
         painter.setBrush(QColor("#4CAF50"))
         painter.setPen(QPen(QColor("#2E7D32"), 1))
         painter.drawEllipse(self.output_anchor_rect)
+        
+        # Draw execution status indicator (top-right corner)
+        if self.execution_status != "pending":
+            status_color = self.STATUS_COLORS.get(self.execution_status, QColor("#666666"))
+            status_size = 12
+            status_x = self.width - status_size - 4
+            status_y = 4
+            painter.setBrush(status_color)
+            painter.setPen(QPen(status_color.darker(120), 1))
+            painter.drawEllipse(int(status_x), int(status_y), status_size, status_size)
+            
+            # Draw icon inside status indicator
+            painter.setPen(QPen(QColor("#ffffff"), 2))
+            center_x = status_x + status_size / 2
+            center_y = status_y + status_size / 2
+            
+            if self.execution_status == "completed":
+                # Draw checkmark
+                painter.drawLine(int(center_x - 3), int(center_y), int(center_x - 1), int(center_y + 2))
+                painter.drawLine(int(center_x - 1), int(center_y + 2), int(center_x + 3), int(center_y - 2))
+            elif self.execution_status == "running":
+                # Draw dot
+                painter.setBrush(QColor("#ffffff"))
+                painter.drawEllipse(int(center_x - 2), int(center_y - 2), 4, 4)
+            elif self.execution_status == "failed":
+                # Draw X
+                painter.drawLine(int(center_x - 2), int(center_y - 2), int(center_x + 2), int(center_y + 2))
+                painter.drawLine(int(center_x + 2), int(center_y - 2), int(center_x - 2), int(center_y + 2))
 
 
     def mouseDoubleClickEvent(self, event):
@@ -475,6 +597,12 @@ class NodeItem(QGraphicsItem):
             self.hover_swap_button = None
             self.update()
         super().hoverLeaveEvent(event)
+    
+    def set_execution_status(self, status: str):
+        """Set execution status and trigger repaint"""
+        if status in self.STATUS_COLORS:
+            self.execution_status = status
+            self.update()  # Trigger repaint
 
 
 class ConnectionLine(QGraphicsPathItem):
@@ -896,6 +1024,20 @@ class NodeGraphView(QGraphicsView):
         
         # Update all connections since thread relationships may have changed
         self.update_connections()
+    
+    def update_node_status(self, node_id: int, status: str):
+        """
+        Update the execution status of a specific node by ID
+        
+        Args:
+            node_id: The ID of the node to update
+            status: One of 'pending', 'running', 'completed', 'failed'
+        """
+        nodes = [i for i in self.scene.items() if isinstance(i, NodeItem)]
+        for node in nodes:
+            if node.node_data.get("id") == node_id:
+                node.set_execution_status(status)
+                break
 
     def add_node(self, node_data, x, y, force_id=None):
         # Enforce ID
@@ -1600,6 +1742,11 @@ class MainWindow(QMainWindow):
         left_layout.setContentsMargins(10, 10, 10, 10)
         left_layout.setSpacing(10)
         
+        # Execution Control Panel
+        self.execution_panel = ExecutionControlPanel()
+        left_layout.addWidget(self.execution_panel)
+        
+        # Node Context Panel
         self.context_panel = NodeContextPanel()
         left_layout.addWidget(self.context_panel)
         
@@ -1626,7 +1773,13 @@ class MainWindow(QMainWindow):
         # Connect signals
         self.graph_view.nodeSelected.connect(self.on_node_selected)
         self.prop_editor.nodeDataChanged.connect(self.graph_view.update_connections)
+        self.prop_editor.nodeDataChanged.connect(self._update_execution_plan)
         self.prop_editor.branchChanged.connect(self.graph_view.update_node_color)
+        
+        # Connect execution panel signals
+        self.execution_panel.stepExecuted.connect(self._on_step_executed)
+        self.execution_panel.nodeStatesUpdated.connect(self._on_node_states_updated)
+        self.execution_panel.executionError.connect(self._on_execution_error)
         
         # Set initial sizes
         self.main_splitter.setSizes([300, 1000])
@@ -1666,6 +1819,33 @@ class MainWindow(QMainWindow):
         
         self.prop_editor.load_node(node_data, is_first_in_thread=is_first)
         self.context_panel.load_node_context(node_data)
+    
+    def _update_execution_plan(self):
+        """Update the execution plan when node data changes"""
+        nodes_data = self.graph_view.get_all_nodes_data()
+        plan = self.execution_panel.get_plan_from_nodes(nodes_data)
+        self.execution_panel.set_plan(plan)
+    
+    def _on_step_executed(self, node_context: dict):
+        """Handle step execution - update node context panel and node states"""
+        # Update context panel with the executed node's context
+        self.context_panel.load_node_context_from_api(node_context)
+        
+        # Update node visual state
+        node_id = node_context.get("node_id")
+        if node_id:
+            self.graph_view.update_node_status(node_id, "completed")
+    
+    def _on_node_states_updated(self, node_states: list):
+        """Handle node states update from executor"""
+        for state in node_states:
+            node_id = state.get("node_id")
+            status = state.get("status", "pending")
+            self.graph_view.update_node_status(node_id, status)
+    
+    def _on_execution_error(self, error: str):
+        """Handle execution error"""
+        QMessageBox.warning(self, "Execution Error", error)
 
     def load_json_plan(self):
         file_name, _ = QFileDialog.getOpenFileName(self, "Open Plan JSON", "", "JSON Files (*.json)")

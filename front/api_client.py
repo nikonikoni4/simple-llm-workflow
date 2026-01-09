@@ -323,7 +323,7 @@ class ExecutorAPIClient:
 # =============================================================================
 
 try:
-    from PyQt6.QtCore import QThread, pyqtSignal, QObject
+    from PyQt5.QtCore import QThread, pyqtSignal, QObject
     
     class AsyncWorker(QThread):
         """
