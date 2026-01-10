@@ -231,13 +231,21 @@ class AsyncExecutor:
 
         # 获取当前节点使用的工具列表
         tools_to_limit = set()
+        initial_tool = None
         if node and node.tools:
             tools_to_limit.update(node.tools)
+        # 对于 tool-first 节点，需要包含初始工具（额外+1配额，因为初始调用不应占用LLM限额）
+        if node and node.node_type == "tool-first" and node.initial_tool_name:
+            initial_tool = node.initial_tool_name
+            tools_to_limit.add(initial_tool)
 
         # 应用默认限制到所有相关工具
         if self._default_tools_limit is not None:
             for tool in tools_to_limit:
                 self.tools_usage_limit[tool] = self._default_tools_limit
+            # tool-first 的初始工具额外+1（初始调用不计入LLM限额）
+            if initial_tool:
+                self.tools_usage_limit[initial_tool] += 1
 
         # 如果节点有单独的 tools_limit，覆盖默认值（优先级更高）
         node_tools_limit = getattr(node, 'tools_limit', None) if node else None
@@ -312,8 +320,8 @@ class AsyncExecutor:
                 raise ValueError(f"工具 {tool} 不存在，可用工具: {list(self.tools_map.keys())}")
 
     def _can_use_tool(self, tool_name: str) -> bool:
-        """判断指定工具是否还能调用"""
-        return self.tools_usage_limit.get(tool_name, 0) > 0
+        """判断指定工具是否还能调用（未声明的工具默认有默认调用次数）"""
+        return self.tools_usage_limit.get(tool_name, self._default_tools_limit) > 0
     
     def _consume_tool_usage(self, tool_name: str) -> None:
         """消耗一次工具调用次数"""
@@ -419,7 +427,7 @@ class AsyncExecutor:
             return False, error_msg
         
         if not self._can_use_tool(tool_name):
-            error_msg = f"工具 {tool_name} 调用次数已用完"
+            error_msg = f"error 工具 {tool_name} 调用次数已用完"
             logger.info(f"    ✗ {error_msg}")
             self._add_message_to_thread(thread_id, ToolMessage(content=error_msg, tool_call_id=tool_id))
             return False, error_msg
