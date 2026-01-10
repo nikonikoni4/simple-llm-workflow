@@ -11,7 +11,7 @@ if parent_dir not in sys.path:
 
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
                              QHBoxLayout, QSplitter, QGroupBox, QFormLayout, 
-                             QLineEdit, QCheckBox, QDoubleSpinBox, QTextEdit, 
+                             QLineEdit, QCheckBox, QDoubleSpinBox, QSpinBox, QTextEdit, 
                              QComboBox, QPushButton, QGraphicsView, QGraphicsScene, 
                              QGraphicsItem, QGraphicsRectItem, QGraphicsTextItem,
                              QGraphicsLineItem, QGraphicsPathItem, QMenu, QLabel, 
@@ -207,7 +207,8 @@ class NodeContextPanel(QGroupBox):
         # Context Messages Section
         self.context_section = CollapsibleSection("Context Information")
         self.context_browser = QTextBrowser()
-        self.context_browser.setMaximumHeight(200)
+        self.context_browser.setMinimumHeight(200)
+        self.context_browser.setMaximumHeight(1200)
         self.context_browser.setPlaceholderText("No context data available")
         self.context_section.set_content(self.context_browser)
         self.main_layout.addWidget(self.context_section)
@@ -215,7 +216,8 @@ class NodeContextPanel(QGroupBox):
         # LLM Input Prompt Section
         self.prompt_section = CollapsibleSection("LLM Input Prompt")
         self.prompt_browser = QTextBrowser()
-        self.prompt_browser.setMaximumHeight(200)
+        self.prompt_browser.setMinimumHeight(300)
+        self.prompt_browser.setMaximumHeight(1200)
         self.prompt_browser.setPlaceholderText("No prompt data available")
         self.prompt_section.set_content(self.prompt_browser)
         self.main_layout.addWidget(self.prompt_section)
@@ -223,7 +225,8 @@ class NodeContextPanel(QGroupBox):
         # Node Output Section
         self.output_section = CollapsibleSection("Node Output")
         self.output_browser = QTextBrowser()
-        self.output_browser.setMaximumHeight(200)
+        self.output_browser.setMinimumHeight(300)
+        self.output_browser.setMaximumHeight(1200)
         self.output_browser.setPlaceholderText("No output data available")
         self.output_section.set_content(self.output_browser)
         self.main_layout.addWidget(self.output_section)
@@ -766,7 +769,7 @@ class NodeGraphView(QGraphicsView):
         # Test Data - Position at bottom-left area (positive Y goes down in Qt)
         # Use Y=200 as baseline for main thread (appears in lower area of screen)
         self.main_y_baseline = 200
-        self.add_node({"node_name": "main", "node_type": "llm-first", "thread_id": "main", "task_prompt": "Start task", "fixed": True, "thread_view_index": 0}, 0, self.main_y_baseline)
+        self.add_node({"node_name": "main", "node_type": "llm-first", "thread_id": "main", "task_prompt": "", "fixed": True, "thread_view_index": 0}, 0, self.main_y_baseline)
         
         # Center view on bottom-left area to show first node at screen's bottom-left
         # Offset the center to the right and down to position first node at bottom-left
@@ -1228,7 +1231,7 @@ class NodeGraphView(QGraphicsView):
             "node_name": "New Node", 
             "node_type": "llm-first", 
             "thread_id": parent_thread,
-            "task_prompt": "New task...",
+            "task_prompt": "",
             "parent_id": parent_item.node_data.get("id")
         }
         self.add_node(new_data, 0, new_y)
@@ -1254,7 +1257,7 @@ class NodeGraphView(QGraphicsView):
             "node_type": "llm-first",
             "thread_id": new_thread_id,
             "parent_thread_id": parent_thread,
-            "task_prompt": "Branch task...",
+            "task_prompt": "",
             "parent_id": parent_item.node_data.get("id"),
             "thread_view_index": next_idx
         }
@@ -1386,7 +1389,7 @@ class NodeGraphView(QGraphicsView):
         new_data = {
             "node_name": "New Node", 
             "node_type": "llm-first", 
-            "task_prompt": "New task..."
+            "task_prompt": ""
         }
         self.add_node(new_data, 0, self.main_y_baseline)
 
@@ -1449,7 +1452,7 @@ class NodePropertyEditor(QGroupBox):
         # Tools selection using properties checkboxes container
         self.tools_container = QWidget()
         self.tools_container_layout = QVBoxLayout(self.tools_container)
-        self.tools_container_layout.setContentsMargins(0, 0, 0, 0)
+        self.tools_container_layout.setContentsMargins(20, 0, 0, 0)
         self.tools_container_layout.setSpacing(5)
         self.tool_checkboxes = {} # name -> QCheckBox
         
@@ -1463,7 +1466,7 @@ class NodePropertyEditor(QGroupBox):
         
         self.initial_tool_args_edit = QTextEdit()
         self.initial_tool_args_edit.setPlaceholderText('Initial Args e.g. {"arg": "val"}')
-        self.initial_tool_args_edit.setMaximumHeight(60)
+        self.initial_tool_args_edit.setMinimumHeight(300)
 
         # --- Data Flow Input ---
         self.data_in_thread_edit = QLineEdit()
@@ -1527,7 +1530,7 @@ class NodePropertyEditor(QGroupBox):
         tools_label = QLabel("Tools (LLM可调用的工具):")
         tools_label.setStyleSheet("font-weight: bold;")
         tools_layout.addWidget(tools_label)
-        tools_layout.addWidget(tools_label)
+
         tools_layout.addWidget(self.tools_container)
         
         # Enable Tool Loop
@@ -1680,16 +1683,35 @@ class NodePropertyEditor(QGroupBox):
                 
                 # Store tool details for later use
                 self._available_tools = {}
+                self.tool_limit_spinboxes = {}
                 
                 for tool in tools:
                     tool_name = tool.get("name", "")
                     self._available_tools[tool_name] = tool
                     
                     # Add to tools container
+                    row_widget = QWidget()
+                    row_layout = QHBoxLayout(row_widget)
+                    row_layout.setContentsMargins(0, 0, 0, 0)
+                    
                     cb = QCheckBox(tool_name)
                     cb.stateChanged.connect(self._on_tools_list_changed)
-                    self.tools_container_layout.addWidget(cb)
+                    
+                    limit_spin = QSpinBox()
+                    limit_spin.setRange(0, 999)
+                    limit_spin.setSpecialValueText("Default")
+                    limit_spin.setPrefix("Limit: ")
+                    limit_spin.setToolTip("Max calls for this tool (0=Executor Default)")
+                    limit_spin.setFixedWidth(120)
+                    limit_spin.valueChanged.connect(self._auto_save)
+                    
+                    row_layout.addWidget(cb)
+                    row_layout.addStretch()
+                    row_layout.addWidget(limit_spin)
+                    
+                    self.tools_container_layout.addWidget(row_widget)
                     self.tool_checkboxes[tool_name] = cb
+                    self.tool_limit_spinboxes[tool_name] = limit_spin
                     
                     # Add to init tool dropdown
                     self.initial_tool_combo.addItem(tool_name)
@@ -1800,15 +1822,20 @@ class NodePropertyEditor(QGroupBox):
         
         self.prompt_edit.setText(node_data.get("task_prompt", ""))
         
-        # Load tools - check the items in the list
-        tools = node_data.get("tools")
         # Load tools - check the items
         tools = node_data.get("tools")
+        tools_limit = node_data.get("tools_limit") or {}
+        
         for name, cb in self.tool_checkboxes.items():
             if tools and name in tools:
                 cb.setChecked(True)
             else:
                 cb.setChecked(False)
+            
+            # Load limit
+            if hasattr(self, 'tool_limit_spinboxes') and name in self.tool_limit_spinboxes:
+                limit_val = tools_limit.get(name, 0)
+                self.tool_limit_spinboxes[name].setValue(limit_val)
         
         self.enable_tool_loop_cb.setChecked(node_data.get("enable_tool_loop", False))
         
@@ -1901,6 +1928,15 @@ class NodePropertyEditor(QGroupBox):
             if cb.isChecked():
                 checked_tools.append(name)
         self.current_node_data["tools"] = checked_tools if checked_tools else None
+        
+        # Save tools limit
+        tools_limit = {}
+        if hasattr(self, 'tool_limit_spinboxes'):
+             for name, spin in self.tool_limit_spinboxes.items():
+                 if spin.value() > 0:
+                     tools_limit[name] = spin.value()
+        
+        self.current_node_data["tools_limit"] = tools_limit if tools_limit else None
         
         self.current_node_data["enable_tool_loop"] = self.enable_tool_loop_cb.isChecked()
         
@@ -2013,7 +2049,15 @@ class MainWindow(QMainWindow):
         self.context_panel = NodeContextPanel()
         left_layout.addWidget(self.context_panel)
         
-        self.main_splitter.addWidget(left_container)
+        # Wrap left container in ScrollArea
+        left_scroll = QScrollArea()
+        left_scroll.setWidget(left_container)
+        left_scroll.setWidgetResizable(True)
+        left_scroll.setFrameShape(QFrame.NoFrame) # Clean look
+        left_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        left_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        
+        self.main_splitter.addWidget(left_scroll)
         
         # --- Right Panel (Graph + Props) ---
         self.right_splitter = QSplitter(Qt.Orientation.Vertical)
@@ -2043,6 +2087,7 @@ class MainWindow(QMainWindow):
         self.execution_panel.stepExecuted.connect(self._on_step_executed)
         self.execution_panel.nodeStatesUpdated.connect(self._on_node_states_updated)
         self.execution_panel.executionError.connect(self._on_execution_error)
+        self.execution_panel.saveRequested.connect(self.prop_editor.save_node_data)
         
         # Set initial sizes
         self.main_splitter.setSizes([300, 1000])

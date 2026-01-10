@@ -38,17 +38,11 @@ class ModelConfig(BaseModel):
     top_p: float = 0.9
 
 
-class ToolConfig(BaseModel):
-    """单个工具配置"""
-    name: str
-    limit: int = 10
-
-
 class InitExecutorRequest(BaseModel):
     """初始化执行器请求"""
     plan: dict  # ExecutionPlan 的字典形式
     user_message: str
-    tools_config: Optional[list[ToolConfig]] = None
+    default_tool_limit: Optional[int] = None  # 默认工具调用次数限制
     llm_config: Optional[ModelConfig] = None  # 重命名避免与 Pydantic 保留字段冲突
 
 
@@ -122,19 +116,19 @@ class ExecutorManager:
         return {name: self._tools_registry[name] for name in tool_names if name in self._tools_registry}
     
     def create_executor(
-        self, 
-        plan: ExecutionPlan, 
+        self,
+        plan: ExecutionPlan,
         user_message: str,
-        tools_limit: dict[str, int] | None = None
+        default_tools_limit: int | None = None
     ) -> str:
         """创建新的执行器实例"""
         executor_id = str(uuid.uuid4())
-        
+
         executor = AsyncExecutor(
             plan=plan,
             user_message=user_message,
             tools_map=self._tools_registry.copy(),
-            tools_limit=tools_limit,
+            default_tools_limit=default_tools_limit,
             llm_factory=self._llm_factory
         )
         
@@ -282,23 +276,18 @@ async def list_tools():
 async def init_executor(request: InitExecutorRequest):
     """
     初始化执行器
-    
+
     创建一个新的 AsyncExecutor 实例，准备执行计划
     """
     try:
         # 解析 ExecutionPlan
         plan = ExecutionPlan(**request.plan)
-        
-        # 构建工具限制
-        tools_limit = None
-        if request.tools_config:
-            tools_limit = {tc.name: tc.limit for tc in request.tools_config}
-        
+
         # 创建执行器
         executor_id = executor_manager.create_executor(
             plan=plan,
             user_message=request.user_message,
-            tools_limit=tools_limit
+            default_tools_limit=request.default_tool_limit
         )
         
         return InitExecutorResponse(
@@ -561,16 +550,16 @@ def setup_test_tools():
 
 
 def setup_llm_factory(
-    api_key: str = None, 
-    model: str = "qwen-plus",
+    api_key: str = None,
+    model: str = "qwen-plus-2025-12-01",
     api_base: str = "https://dashscope.aliyuncs.com/compatible-mode/v1",
     **kwargs
 ):
     """
     设置 LLM 工厂函数
-    
+
     支持阿里云 DashScope API (通义千问) 和 OpenAI API
-    
+
     Args:
         api_key: API密钥 (DashScope API Key 或 OpenAI API Key)。如果不传，尝试从环境读取。
         model: 模型名称，默认 "qwen-plus"
@@ -584,26 +573,52 @@ def setup_llm_factory(
     # 尝试从环境变量读取 API Key
     if not api_key:
         api_key = os.getenv("DASHSCOPE_API_KEY") or os.getenv("OPENAI_API_KEY")
-    
+
     if not api_key:
         print("⚠️ Warning: No API key found. Please set DASHSCOPE_API_KEY or OPENAI_API_KEY environment variable.")
 
-    def factory():
-        try:
-            from langchain_openai import ChatOpenAI
-            
-            # 使用 OpenAI 兼容模式，支持阿里云 DashScope 和 OpenAI
-            return ChatOpenAI(
-                model=model,
-                openai_api_key=api_key,
-                openai_api_base=api_base,
-                temperature=kwargs.get('temperature', 0.7),
-                top_p=kwargs.get('top_p', 0.9)
-            )
-        except ImportError:
-            raise ValueError("langchain_openai not installed. Run: pip install langchain-openai")
-    
+    # 使用 lambda 捕获所有参数，确保闭包正确捕获变量
+    factory = lambda: _create_llm_instance(
+        model=model,
+        api_key=api_key,
+        api_base=api_base,
+        **kwargs
+    )
+
     executor_manager.set_llm_factory(factory)
+
+
+def _create_llm_instance(
+    model: str,
+    api_key: str,
+    api_base: str,
+    **kwargs
+):
+    """
+    创建 LLM 实例的辅助函数
+
+    Args:
+        model: 模型名称
+        api_key: API密钥
+        api_base: API基础URL
+        **kwargs: 其他参数
+
+    Returns:
+        ChatOpenAI 实例
+    """
+    try:
+        from langchain_openai import ChatOpenAI
+
+        # 使用 OpenAI 兼容模式，支持阿里云 DashScope 和 OpenAI
+        return ChatOpenAI(
+            model=model,
+            openai_api_key=api_key,
+            openai_api_base=api_base,
+            temperature=kwargs.get('temperature', 0.7),
+            top_p=kwargs.get('top_p', 0.9)
+        )
+    except ImportError:
+        raise ValueError("langchain_openai not installed. Run: pip install langchain-openai")
 
 
 # =============================================================================
@@ -618,7 +633,9 @@ if __name__ == "__main__":
     
     # 2. 设置测试工具
     setup_test_tools()
-    
+    # 测试 LLM  链接
+    # llm = executor_manager._llm_factory()
+    # print(llm.invoke("Hello, how are you?"))
     print("🚀 Starting Simple LLM Playground API...")
     print("📍 API docs available at: http://localhost:8001/docs")
     

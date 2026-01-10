@@ -13,7 +13,7 @@ import json
 import re
 from pathlib import Path
 from typing import Any
-from lifeprism.llm.llm_classify.tests.data_driving_agent_v2.data_driving_schemas import ExecutionPlan
+from data_driving_schemas import ExecutionPlan
 
 
 def save_plan_as_template(
@@ -152,16 +152,16 @@ def load_plan_from_template(
     plan_data = json.loads(plan_json_str)
     
     # 提取 tools_limit
-    tools_limit = plan_data.pop("tools_limit", None)
+    # tools_limit = plan_data.pop("tools_limit", None)
     
-    return ExecutionPlan(**plan_data), tools_limit
+    return ExecutionPlan(**plan_data), None
 
 
 # 示例用法
 if __name__ == "__main__":
-    from lifeprism.llm.llm_classify.tests.data_driving_agent_v2.plan_generator import plan_generator
-    from lifeprism.llm.llm_classify.tests.data_driving_agent_v2.data_driving_schemas import NodeDefinition
-    
+    from .data_driving_schemas import NodeDefinition
+    from pathlib import Path
+
     # 示例1：手动创建计划并保存
     example_plan = ExecutionPlan(
         task="每日行为总结 {date}",
@@ -188,16 +188,18 @@ if __name__ == "__main__":
             )
         ]
     )
-    
-    # 保存为模板
+
+    # 保存为模板到当前目录的 patterns 文件夹
+    output_path = Path(__file__).parent / "patterns" / "example_daily_plan.json"
     save_plan_as_template(
         plan=example_plan,
         date="2026-01-05",
-        output_path=r"D:\desktop\软件开发\LifeWatch-AI\lifeprism\llm\llm_classify\tests\data_driving_agent_v2\patterns\example_daily_plan.json",
+        output_path=output_path,
         pattern_name="simple",
         tools_limit={"get_daily_stats": 1}
     )
-    
+
     # 示例2：从 LLM 生成的计划保存
-    # plan = plan_generator("2026-01-01", skill_path)
+    # from .plan_generator import plan_generator
+    # plan = plan_generator("2026-01-01", skills_path="skills/user_behavior_summary.md")
     # save_plan_as_template(plan, date="2026-01-01", output_path="...", pattern_name="complex")

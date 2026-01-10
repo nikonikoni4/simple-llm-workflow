@@ -68,34 +68,31 @@ class AsyncExecutor:
     - 执行状态追踪
     - 节点上下文收集
     """
-    
-    # 默认工具调用次数限制
-    DEFAULT_TOOLS_USAGE_LIMIT = {}
 
     def __init__(
-        self, 
-        plan: ExecutionPlan, 
-        user_message: str, 
-        main_thread_id: str = "main",
-        tools_map: dict[str, Callable] | None = None,
-        tools_limit: dict[str, int] | None = None,
-        llm_factory: Callable[..., Any] | None = None
+        self,
+        plan: ExecutionPlan,
+        user_message: str,
+        main_thread_id: str = "main", # 主线程 ID
+        tools_map: dict[str, Callable] | None = None, # 工具映射 {tool_name: callable}
+        default_tools_limit: int | None = 1, # 默认工具调用次数限制（每个工具的默认调用次数），None 表示无限制
+        llm_factory: Callable[..., Any] | None = None # LLM 工厂函数，用于创建 LLM 实例
     ):
         """
         初始化异步执行器
-        
+
         Args:
             plan: 执行计划
             user_message: 用户消息
             main_thread_id: 主线程 ID
             tools_map: 工具映射 {tool_name: callable}
-            tools_limit: 工具调用次数限制 {tool_name: limit}
+            default_tools_limit: 默认工具调用次数限制（每个工具的默认调用次数），None 表示无限制
             llm_factory: LLM 工厂函数，用于创建 LLM 实例
         """
         self.plan = plan
         self.main_thread_id = main_thread_id
         self.llm_factory = llm_factory
-        
+
         # 新的多线程 Context 结构
         self.context: Context = {
             "messages": {
@@ -106,15 +103,13 @@ class AsyncExecutor:
                 main_thread_id: {"parent_thread": None}
             }
         }
-        
+
         # 工具映射
         self.tools_map = tools_map or {}
-        
-        # 工具使用限制
-        self._initial_tools_limit = self.DEFAULT_TOOLS_USAGE_LIMIT.copy()
-        if tools_limit:
-            self._initial_tools_limit.update(tools_limit)
-        self.tools_usage_limit = self._initial_tools_limit.copy()
+
+        # 默认工具使用限制（当节点未设置 tools_limit 时使用）
+        self._default_tools_limit = default_tools_limit
+        self.tools_usage_limit = {}
         
         # tokens 使用统计
         self.tokens_usage = {
@@ -224,9 +219,30 @@ class AsyncExecutor:
     # =========================================================================
     # 工具管理方法
     # =========================================================================
-    def reset_tools_limit(self):
-        """重置工具调用次数限制为初始配置"""
-        self.tools_usage_limit = self._initial_tools_limit.copy()
+    def reset_tools_limit(self, node: NodeDefinition | None = None):
+        """
+        重置工具调用次数限制
+
+        Args:
+            node: 当前执行的节点。如果节点设置了 tools_limit，则与默认限制合并；
+                  节点的限制优先级高于默认限制。
+        """
+        self.tools_usage_limit = {}
+
+        # 获取当前节点使用的工具列表
+        tools_to_limit = set()
+        if node and node.tools:
+            tools_to_limit.update(node.tools)
+
+        # 应用默认限制到所有相关工具
+        if self._default_tools_limit is not None:
+            for tool in tools_to_limit:
+                self.tools_usage_limit[tool] = self._default_tools_limit
+
+        # 如果节点有单独的 tools_limit，覆盖默认值（优先级更高）
+        node_tools_limit = getattr(node, 'tools_limit', None) if node else None
+        if node_tools_limit:
+            self.tools_usage_limit.update(node_tools_limit)
     
     def reset_tokens_usage(self):
         """重置 tokens 使用统计"""
@@ -238,11 +254,54 @@ class AsyncExecutor:
     
     def _accumulate_tokens(self, result) -> None:
         """累加 tokens 使用量"""
+        if not result:
+            logger.debug("    ⚠️  _accumulate_tokens: result 为空，跳过统计")
+            return
+
+        tokens_added = False
+
+        # 尝试从 response_metadata 获取 token usage
         if hasattr(result, 'response_metadata') and 'token_usage' in result.response_metadata:
             token_usage = result.response_metadata['token_usage']
-            self.tokens_usage['input_tokens'] += token_usage.get('input_tokens', 0)
-            self.tokens_usage['output_tokens'] += token_usage.get('output_tokens', 0)
-            self.tokens_usage['total_tokens'] += token_usage.get('total_tokens', 0)
+            input_tokens = token_usage.get('input_tokens', 0)
+            output_tokens = token_usage.get('output_tokens', 0)
+            total_tokens = token_usage.get('total_tokens', 0)
+
+            self.tokens_usage['input_tokens'] += input_tokens
+            self.tokens_usage['output_tokens'] += output_tokens
+            self.tokens_usage['total_tokens'] += total_tokens
+            tokens_added = True
+            logger.debug(f"    📊 Token 统计 (response_metadata): input={input_tokens}, output={output_tokens}, total={total_tokens}")
+
+        # 尝试直接从 result 获取 token usage（某些 LLM 实现）
+        elif hasattr(result, 'token_usage'):
+            token_usage = result.token_usage
+            input_tokens = token_usage.get('input_tokens', 0)
+            output_tokens = token_usage.get('output_tokens', 0)
+            total_tokens = token_usage.get('total_tokens', 0)
+
+            self.tokens_usage['input_tokens'] += input_tokens
+            self.tokens_usage['output_tokens'] += output_tokens
+            self.tokens_usage['total_tokens'] += total_tokens
+            tokens_added = True
+            logger.debug(f"    📊 Token 统计 (token_usage): input={input_tokens}, output={output_tokens}, total={total_tokens}")
+
+        # 尝试从 usage_metadata 获取（OpenAI 新版格式）
+        elif hasattr(result, 'usage_metadata'):
+            usage = result.usage_metadata
+            input_tokens = usage.get('input_tokens', 0)
+            output_tokens = usage.get('output_tokens', 0)
+            total_tokens = usage.get('total_tokens', 0)
+
+            self.tokens_usage['input_tokens'] += input_tokens
+            self.tokens_usage['output_tokens'] += output_tokens
+            self.tokens_usage['total_tokens'] += total_tokens
+            tokens_added = True
+            logger.debug(f"    📊 Token 统计 (usage_metadata): input={input_tokens}, output={output_tokens}, total={total_tokens}")
+
+        if not tokens_added:
+            logger.warning(f"    ⚠️  无法从 LLM 响应中获取 token 统计信息")
+            logger.debug(f"    📋 result 类型: {type(result)}, 属性: {dir(result)}")
 
     def _validate_tools(self, tools: list[str] | None):
         """验证工具是否存在"""
@@ -316,12 +375,9 @@ class AsyncExecutor:
 
     def _get_prompt(self, node: NodeDefinition) -> str:
         """构建节点的 prompt"""
-        tools_limit_prompt = self._tools_limit_prompt(node.tools)
         return f"""
 # 历史消息
 {self.get_history(node.thread_id)}
-# 工具可调用次数限制，请合理安排工具调用:
-{tools_limit_prompt}
 # 你需要按照下面要求完成任务：
 {node.task_prompt}
 """
@@ -611,12 +667,16 @@ class AsyncExecutor:
         content = None
         for i, node in enumerate(self.plan.nodes):
             node_id = i + 1
+            # 根据节点配置重置工具调用次数限制
+            self.reset_tools_limit(node)
             await self._execute_single_node(node, node_id)
             content = self.node_contexts.get(node_id, NodeContext(node_id=node_id, node_name=node.node_name, thread_id=node.thread_id)).llm_output
         
         logger.info(f"\n计划执行完成！")
-        logger.info(f"📊 Tokens 使用统计: 输入={self.tokens_usage['input_tokens']}, "
-              f"输出={self.tokens_usage['output_tokens']}, 总计={self.tokens_usage['total_tokens']}\n")
+        logger.info(f"📊 Tokens 使用统计:")
+        logger.info(f"   - 输入 tokens: {self.tokens_usage['input_tokens']}")
+        logger.info(f"   - 输出 tokens: {self.tokens_usage['output_tokens']}")
+        logger.info(f"   - 总计 tokens: {self.tokens_usage['total_tokens']}\n")
         
         return {
             "content": content,
@@ -716,10 +776,11 @@ class AsyncExecutor:
         
         # 第一次执行时初始化
         if self._current_node_index == 0:
-            self.reset_tools_limit()
             self.reset_tokens_usage()
-        
+
         node = self.plan.nodes[next_node_id - 1]
+        # 根据节点配置重置工具调用次数限制
+        self.reset_tools_limit(node)
         await self._execute_single_node(node, next_node_id)
         
         return self.node_contexts.get(next_node_id)

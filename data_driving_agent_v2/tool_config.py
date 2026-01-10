@@ -180,16 +180,16 @@ class ToolConfig:
     ) -> BaseChatModel:
         """
         使用 LangChain 创建模型
-        
+
         Args:
             enable_search: 是否启用搜索功能
             enable_thinking: 是否启用思考功能
             temperature: 温度参数，控制输出的随机性
             **kwargs: 其他传递给模型的参数
-        
+
         Returns:
             创建的 LangChain 模型实例
-        
+
         Example:
             ```python
             llm = config.create_llm(
@@ -199,46 +199,21 @@ class ToolConfig:
             )
             ```
         """
-        try:
-            # 尝试导入 lifeprism 的模型创建函数
-            from lifeprism.llm.llm_classify.utils import create_ChatTongyiModel
-            
-            # 准备参数
-            model_kwargs = {
-                "enable_search": enable_search,
-                "enable_thinking": enable_thinking,
-            }
-            
-            # 如果提供了 API key，添加到参数中
-            if self.api_key:
-                model_kwargs["api_key"] = self.api_key
-            
-            # 如果提供了 temperature，添加到参数中
-            if temperature is not None:
-                model_kwargs["temperature"] = temperature
-            
-            # 添加其他参数
-            model_kwargs.update(kwargs)
-            
-            # 创建模型
-            llm = create_ChatTongyiModel(**model_kwargs)
-            return llm
-            
-        except ImportError:
-            # 如果无法导入 lifeprism，使用通用的 LangChain 模型
-            from langchain_openai import ChatOpenAI
-            
-            model_kwargs = {
-                "model": self.model_name,
-                "temperature": temperature if temperature is not None else 0.7,
-            }
-            
-            if self.api_key:
-                model_kwargs["api_key"] = self.api_key
-            
-            model_kwargs.update(kwargs)
-            
-            return ChatOpenAI(**model_kwargs)
+        from .llm_factory import create_qwen_llm
+
+        # 准备参数
+        model_kwargs = {
+            "api_key": self.api_key,
+            "model": self.model_name,
+            "enable_search": enable_search,
+            "enable_thinking": enable_thinking,
+            "temperature": temperature if temperature is not None else 0.7,
+        }
+
+        # 添加其他参数
+        model_kwargs.update(kwargs)
+
+        return create_qwen_llm(**model_kwargs)
     
     def get_tool_count(self) -> int:
         """

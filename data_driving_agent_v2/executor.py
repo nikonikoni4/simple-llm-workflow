@@ -1,8 +1,8 @@
 # 执行器定义 V2
 # 支持多线程 Context 和 4 种节点类型分发
 
-from .data_driving_schemas import (
-    Context, NodeDefinition, ExecutionPlan, NodeType, ThreadMeta
+from data_driving_schemas import (
+    Context, NodeDefinition, ExecutionPlan, NodeType
 )
 from langchain_core.messages import HumanMessage, AIMessage, ToolMessage
 
@@ -19,40 +19,48 @@ class Executor:
     - data_out 机制: 子线程向父线程输出结果
     """
     
-    # 默认工具调用次数限制
-    DEFAULT_TOOLS_USAGE_LIMIT = {
-    }
 
     def __init__(
-        self, 
-        plan: ExecutionPlan, 
-        user_message: str, 
+        self,
+        plan: ExecutionPlan,
+        user_message: str,
         main_thread_id: str = "main",
         tools_map: dict[str, Callable] | None = None,
-        tools_limit: dict[str, int] | None = None
+        default_tools_limit: int | None = 1,
+        llm_factory: Callable[[], any] | None = None
     ):
+        """
+        初始化执行器
+
+        Args:
+            plan: 执行计划
+            user_message: 用户消息
+            main_thread_id: 主线程 ID
+            tools_map: 工具映射 {tool_name: callable}
+            default_tools_limit: 默认工具调用次数限制（每个工具的默认调用次数），None 表示无限制
+            llm_factory: LLM 工厂函数，用于创建 LLM 实例。如果不提供，需要自行设置默认工厂
+        """
         self.plan = plan
         self.main_thread_id = main_thread_id
-        
+        self.llm_factory = llm_factory
+
         # 新的多线程 Context 结构
         self.context: Context = {
             "messages": {
                 main_thread_id: [HumanMessage(content=user_message)]
             },
             "data_out": {},
-            "thread_meta": {
-                main_thread_id: {"parent_thread": None}
-            }
         }
-        
+
         # 工具映射
+        if tools_map is None:
+            tools_map = {}
+            logger.warning("未提供工具映射")
         self.tools_map = tools_map
-        
-        # 工具使用限制
-        self._initial_tools_limit = self.DEFAULT_TOOLS_USAGE_LIMIT.copy()
-        if tools_limit:
-            self._initial_tools_limit.update(tools_limit)
-        self.tools_usage_limit = self._initial_tools_limit.copy()
+
+        # 默认工具使用限制（当节点未设置 tools_limit 时使用）
+        self._default_tools_limit = default_tools_limit
+        self.tools_usage_limit = {}
         
         # tokens 使用统计
         self.tokens_usage = {
@@ -87,26 +95,24 @@ class Executor:
             raise ValueError(f"线程 {thread_id} 不存在")
         self.context["messages"][thread_id].append(message)
 
-    def _create_thread(self, thread_id: str, parent_thread_id: str | None = None, node: NodeDefinition | None = None) -> None:
+    def _create_thread(self, thread_id: str, node: NodeDefinition | None = None) -> None:
         """
         创建新线程，并根据 node 的 data_in 配置注入初始消息
         
         Args:
             thread_id: 新线程ID
-            parent_thread_id: 父线程ID
             node: 节点定义，用于获取 data_in 配置
         """
         if thread_id in self.context["messages"]:
             return  # 线程已存在，直接返回
         
         self.context["messages"][thread_id] = []
-        self.context["thread_meta"][thread_id] = {"parent_thread": parent_thread_id}
-        
         # 处理 data_in：注入初始消息到新线程
         if node is not None:
-            # 确定数据来源线程：优先使用 data_in_thread，否则使用 parent_thread_id
-            source_thread = node.data_in_thread or parent_thread_id
-            
+            # 确定数据来源线程：优先使用 data_in_thread，否则默认为 main
+            source_thread = node.data_in_thread or self.main_thread_id
+            if not node.data_in_thread:
+                logger.warning(f"    ⚠️  data_in: 节点 '{node.node_name}' 没有指定 data_in_thread，使用默认的 main 线程")
             if source_thread and source_thread in self.context["messages"]:
                 source_msgs = self.context["messages"][source_thread]
                 
@@ -132,22 +138,48 @@ class Executor:
             "content": f"{description}{content}" if description else content
         }
 
-    def _merge_data_out_to_parent(self, child_thread_id: str) -> None:
-        """将子线程的 data_out 合并到父线程的 messages"""
+    def _merge_data_out(self, child_thread_id: str, target_thread_id: str) -> None:
+        """
+        将子线程的 data_out 合并到目标线程的 messages
+        
+        Args:
+            child_thread_id: 子线程ID（数据来源）
+            target_thread_id: 目标线程ID（由节点的 data_out_thread 决定）
+        """
         if child_thread_id not in self.context["data_out"]:
             return
         
-        parent_id = self.context["thread_meta"].get(child_thread_id, {}).get("parent_thread")
-        if parent_id and parent_id in self.context["messages"]:
+        if target_thread_id and target_thread_id in self.context["messages"]:
             data = self.context["data_out"][child_thread_id]
-            self._add_message_to_thread(parent_id, AIMessage(content=data["content"]))
+            self._add_message_to_thread(target_thread_id, AIMessage(content=data["content"]))
+            logger.debug(f"    → data_out: 从 '{child_thread_id}' 合并到 '{target_thread_id}'")
 
     # =========================================================================
     # 工具管理方法
     # =========================================================================
-    def reset_tools_limit(self):
-        """重置工具调用次数限制为初始配置"""
-        self.tools_usage_limit = self._initial_tools_limit.copy()
+    def reset_tools_limit(self, node: NodeDefinition | None = None):
+        """
+        重置工具调用次数限制
+
+        Args:
+            node: 当前执行的节点。如果节点设置了 tools_limit，则与默认限制合并；
+                  节点的限制优先级高于默认限制。
+        """
+        self.tools_usage_limit = {}
+
+        # 获取当前节点使用的工具列表
+        tools_to_limit = set()
+        if node and node.tools:
+            tools_to_limit.update(node.tools)
+
+        # 应用默认限制到所有相关工具
+        if self._default_tools_limit is not None:
+            for tool in tools_to_limit:
+                self.tools_usage_limit[tool] = self._default_tools_limit
+
+        # 如果节点有单独的 tools_limit，覆盖默认值（优先级更高）
+        if node and node.tools_limit:
+            self.tools_usage_limit.update(node.tools_limit)
     
     def reset_tokens_usage(self):
         """重置 tokens 使用统计"""
@@ -159,11 +191,54 @@ class Executor:
     
     def _accumulate_tokens(self, result) -> None:
         """累加 tokens 使用量"""
+        if not result:
+            logger.debug("    ⚠️  _accumulate_tokens: result 为空，跳过统计")
+            return
+
+        tokens_added = False
+
+        # 尝试从 response_metadata 获取 token usage
         if hasattr(result, 'response_metadata') and 'token_usage' in result.response_metadata:
             token_usage = result.response_metadata['token_usage']
-            self.tokens_usage['input_tokens'] += token_usage.get('input_tokens', 0)
-            self.tokens_usage['output_tokens'] += token_usage.get('output_tokens', 0)
-            self.tokens_usage['total_tokens'] += token_usage.get('total_tokens', 0)
+            input_tokens = token_usage.get('input_tokens', 0)
+            output_tokens = token_usage.get('output_tokens', 0)
+            total_tokens = token_usage.get('total_tokens', 0)
+
+            self.tokens_usage['input_tokens'] += input_tokens
+            self.tokens_usage['output_tokens'] += output_tokens
+            self.tokens_usage['total_tokens'] += total_tokens
+            tokens_added = True
+            logger.debug(f"    📊 Token 统计 (response_metadata): input={input_tokens}, output={output_tokens}, total={total_tokens}")
+
+        # 尝试直接从 result 获取 token usage（某些 LLM 实现）
+        elif hasattr(result, 'token_usage'):
+            token_usage = result.token_usage
+            input_tokens = token_usage.get('input_tokens', 0)
+            output_tokens = token_usage.get('output_tokens', 0)
+            total_tokens = token_usage.get('total_tokens', 0)
+
+            self.tokens_usage['input_tokens'] += input_tokens
+            self.tokens_usage['output_tokens'] += output_tokens
+            self.tokens_usage['total_tokens'] += total_tokens
+            tokens_added = True
+            logger.debug(f"    📊 Token 统计 (token_usage): input={input_tokens}, output={output_tokens}, total={total_tokens}")
+
+        # 尝试从 usage_metadata 获取（OpenAI 新版格式）
+        elif hasattr(result, 'usage_metadata'):
+            usage = result.usage_metadata
+            input_tokens = usage.get('input_tokens', 0)
+            output_tokens = usage.get('output_tokens', 0)
+            total_tokens = usage.get('total_tokens', 0)
+
+            self.tokens_usage['input_tokens'] += input_tokens
+            self.tokens_usage['output_tokens'] += output_tokens
+            self.tokens_usage['total_tokens'] += total_tokens
+            tokens_added = True
+            logger.debug(f"    📊 Token 统计 (usage_metadata): input={input_tokens}, output={output_tokens}, total={total_tokens}")
+
+        if not tokens_added:
+            logger.warning(f"    ⚠️  无法从 LLM 响应中获取 token 统计信息")
+            logger.debug(f"    📋 result 类型: {type(result)}, 属性: {dir(result)}")
 
     def _validate_tools(self, tools: list[str] | None):
         """验证工具是否存在"""
@@ -174,13 +249,15 @@ class Executor:
                 raise ValueError(f"工具 {tool} 不存在，可用工具: {list(self.tools_map.keys())}")
 
     def _can_use_tool(self, tool_name: str) -> bool:
-        """判断指定工具是否还能调用"""
-        return self.tools_usage_limit.get(tool_name, 0) > 0
+        """判断指定工具是否还能调用（未声明的工具默认有 DEFAULT_TOOL_USAGE_COUNT 次调用机会）"""
+        return self.tools_usage_limit.get(tool_name, self._default_tools_limit) > 0
     
     def _consume_tool_usage(self, tool_name: str) -> None:
-        """消耗一次工具调用次数"""
-        if tool_name in self.tools_usage_limit:
-            self.tools_usage_limit[tool_name] -= 1
+        """消耗一次工具调用次数（未声明的工具会被初始化后再消耗）"""
+        if tool_name not in self.tools_usage_limit:
+            # 未声明的工具，初始化为默认次数
+            self.tools_usage_limit[tool_name] = self._default_tools_limit
+        self.tools_usage_limit[tool_name] -= 1
 
     def _has_available_tools(self, tools: list[str] | None) -> bool:
         """检查是否还有可用的工具调用次数"""
@@ -200,7 +277,10 @@ class Executor:
 
     def _create_llm_with_tools(self, tools: list[str] | None):
         """创建 LLM，如果有工具则绑定"""
-        llm = create_llm(enable_search=False, enable_thinking=False)
+        if self.llm_factory is None:
+            raise ValueError("必须提供 llm_factory 来创建 LLM 实例")
+
+        llm = self.llm_factory()
         if tools:
             tool_objects = [self.tools_map[t] for t in tools]
             llm = llm.bind_tools(tool_objects)
@@ -234,12 +314,9 @@ class Executor:
 
     def _get_prompt(self, node: NodeDefinition) -> str:
         """构建节点的 prompt"""
-        tools_limit_prompt = self._tools_limit_prompt(node.tools)
         return f"""
 # 历史消息
 {self.get_history(node.thread_id)}
-# 工具可调用次数限制，请合理安排工具调用:
-{tools_limit_prompt}
 # 你需要按照下面要求完成任务：
 {node.task_prompt}
 """
@@ -330,6 +407,10 @@ class Executor:
         单次 LLM 调用（可能包含一次工具调用）
         """
         prompt = self._get_prompt(node)
+        print("="*20) 
+        print(node.node_name)
+        print(prompt)
+        print("="*20)
         result = llm.invoke(prompt)
         self._accumulate_tokens(result)
         self._add_message_to_thread(node.thread_id, result)
@@ -481,11 +562,12 @@ class Executor:
 
         content = None
         for node in self.plan.nodes:
-            # 确保线程存在，使用节点定义的 parent_thread_id
+            # 根据节点配置重置工具调用次数限制
+            self.reset_tools_limit(node)
+
+            # 确保线程存在
             if node.thread_id not in self.context["messages"]:
-                # 优先使用节点定义的 parent_thread_id，否则默认为 main_thread_id
-                parent_id = node.parent_thread_id if node.parent_thread_id else self.main_thread_id
-                self._create_thread(node.thread_id, parent_id, node)
+                self._create_thread(node.thread_id, node)
             
             # 使用处理器分发
             handler = self._node_handlers.get(node.node_type)
@@ -493,14 +575,20 @@ class Executor:
                 raise ValueError(f"未知节点类型: {node.node_type}")
             
             content = handler(node)
-            
-            # 如果节点设置了 data_out，合并到父线程
+            print(content)
+            # 如果节点设置了 data_out，根据 data_out_thread 合并到目标线程
             if node.data_out:
-                self._merge_data_out_to_parent(node.thread_id)
+                # 目标线程由 data_out_thread 决定，若没有则默认为 main
+                if not node.data_out_thread:
+                    logger.warning(f"    ⚠️  data_out: 节点 '{node.node_name}' 没有指定 data_out_thread，使用默认的 main 线程")
+                target_thread = node.data_out_thread if node.data_out_thread else self.main_thread_id
+                self._merge_data_out(node.thread_id, target_thread)
         
         logger.info(f"\n计划执行完成！")
-        logger.info(f"📊 Tokens 使用统计: 输入={self.tokens_usage['input_tokens']}, "
-              f"输出={self.tokens_usage['output_tokens']}, 总计={self.tokens_usage['total_tokens']}\n")
+        logger.info(f"📊 Tokens 使用统计:")
+        logger.info(f"   - 输入 tokens: {self.tokens_usage['input_tokens']}")
+        logger.info(f"   - 输出 tokens: {self.tokens_usage['output_tokens']}")
+        logger.info(f"   - 总计 tokens: {self.tokens_usage['total_tokens']}\n")
         
         return {
             "content": content,
@@ -509,19 +597,64 @@ class Executor:
             "data_out": self.context["data_out"]
         }
 
-
 # =============================================================================
 # 测试代码
 # =============================================================================
 if __name__ == "__main__":
     # 创建测试计划 - 使用 llm_auto 和 query 节点
-    # 
-    from lifeprism.llm.llm_classify.tests.data_driving_agent_v2.load_plans import load_plan_from_template
-    plan,tools_limit= load_plan_from_template(json_path=r"D:\desktop\软件开发\LifeWatch-AI\lifeprism\llm\llm_classify\tests\data_driving_agent_v2\patterns\test_plan.json",
-                        pattern_name="test1",date = "2026-01-03")
-    executor = Executor(plan, "请帮我总结 2026-01-03 的使用情况",tools_limit=tools_limit)
+    #
+
+    # 配置日志级别，方便调试
+    import logging
+    logging.basicConfig(
+        level=logging.DEBUG,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    )
+
+    import os
+    from load_plans import load_plan_from_template
+    from langchain_core.tools import tool
+    from langchain_openai import ChatOpenAI
+
+    @tool
+    def add(a,b):
+        "加法"
+        return a+b
+
+    tools_map = {
+        "add": add
+    }
+
+    # 创建 LLM 工厂函数
+    def create_llm_factory():
+        """创建 LLM 工厂函数"""
+        api_key = os.getenv("DASHSCOPE_API_KEY") or os.getenv("OPENAI_API_KEY")
+        if not api_key:
+            raise ValueError("请设置环境变量 DASHSCOPE_API_KEY 或 OPENAI_API_KEY")
+
+        return lambda: ChatOpenAI(
+            model="qwen-plus-2025-12-01",
+            openai_api_key=api_key,
+            openai_api_base="https://dashscope.aliyuncs.com/compatible-mode/v1",
+            temperature=0.7
+        )
+
+    # 获取当前脚本所在目录的绝对路径
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    # 构建 json 文件的绝对路径
+    json_path = os.path.join(current_dir, "test_plan", "example", "example.json")
+    plan, tools_limit = load_plan_from_template(json_path=json_path,
+                                              pattern_name="custom")
+
+    executor = Executor(
+        plan,
+        "请帮我总结 2026-01-03 的使用情况",
+        tools_map=tools_map,
+        default_tools_limit=1,
+        llm_factory=create_llm_factory()
+    )
     result = executor.execute()
-    
+
     # 格式化输出
     print("\n" + "=" * 80)
     print("📊 AI 生成的行为总结")

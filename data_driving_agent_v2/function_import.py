@@ -1,9 +1,11 @@
 """
-在这里引入工具函数和创建模型函数
+工具和模型导入示例
 
 提供两种方式：
 1. 传统方式：直接定义 tools_map 和 tools_limit（向后兼容）
 2. 新方式：使用 ToolConfig 类（推荐）
+
+同时也展示了使用新的 llm_factory 创建 LLM 的方法
 """
 
 # =============================================================================
@@ -47,8 +49,30 @@ tool_config.register_tool("add", add, limit=1)
 # tools_map = tool_config.get_tools_map()
 # tools_limit = tool_config.get_tools_limit()
 
-# 创建模型
+# 创建模型（通过 ToolConfig）
 # llm = tool_config.create_llm(enable_search=False, enable_thinking=False)
+
+
+# =============================================================================
+# 方式3：直接使用 llm_factory（最灵活）
+# =============================================================================
+from .llm_factory import create_qwen_llm, create_llm_factory
+
+
+# 直接创建 LLM 实例
+# llm = create_qwen_llm(
+#     api_key=None,  # 从环境变量读取
+#     model="qwen-plus",
+#     enable_search=False,
+#     enable_thinking=True
+# )
+
+# 创建 LLM 工厂函数（推荐用于 Executor）
+# llm_factory = create_llm_factory(
+#     model_type="qwen",
+#     model="qwen-plus"
+# )
+# 使用时: llm = llm_factory()
 
 
 # =============================================================================
@@ -58,8 +82,13 @@ if __name__ == "__main__":
     print("传统方式:")
     print(f"  tools_map: {tools_map}")
     print(f"  tools_limit: {tools_limit}")
-    
+
     print("\n使用 ToolConfig 类:")
     print(f"  {tool_config}")
     print(f"  工具列表: {tool_config.list_tools()}")
     print(f"  工具信息: {tool_config.get_tool_info()}")
+
+    print("\n使用 llm_factory:")
+    factory = create_llm_factory(model_type="qwen", model="qwen-plus")
+    print(f"  工厂函数: {factory}")
+    print(f"  调用工厂将返回 LLM 实例")

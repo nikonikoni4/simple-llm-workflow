@@ -1,11 +1,12 @@
 {
     "custom": {
+        "task": "Custom Analysis Task",
         "nodes": [
             {
                 "node_name": "main",
                 "node_type": "tool-first",
                 "thread_id": "main",
-                "task_prompt": "",
+                "task_prompt": "Start task",
                 "fixed": true,
                 "thread_view_index": 0,
                 "id": 1,

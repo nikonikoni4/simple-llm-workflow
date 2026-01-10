@@ -21,13 +21,22 @@ import json
 from pathlib import Path
 from typing import Any
 
-from lifeprism.llm.llm_classify.tests.data_driving_agent_v2.data_driving_schemas import (
-    ExecutionPlan, 
-    NodeDefinition,
-    NodeType,
-    ALL_NODE_TYPES,
-    create_execution_plan_schema
-)
+try:
+    from data_driving_schemas import (
+        ExecutionPlan, 
+        NodeDefinition,
+        NodeType,
+        ALL_NODE_TYPES,
+        create_execution_plan_schema
+    )
+except ImportError:
+    from .data_driving_schemas import (
+        ExecutionPlan, 
+        NodeDefinition,
+        NodeType,
+        ALL_NODE_TYPES,
+        create_execution_plan_schema
+    )
 
 
 # ============================================================================

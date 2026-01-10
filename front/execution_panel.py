@@ -38,6 +38,7 @@ class ExecutionControlPanel(QWidget):
     executionCompleted = pyqtSignal(dict)       # result
     executionError = pyqtSignal(str)            # error message
     nodeStatesUpdated = pyqtSignal(list)        # node_states list
+    saveRequested = pyqtSignal()                # Request to save current state
     
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -177,6 +178,9 @@ class ExecutionControlPanel(QWidget):
     
     def init_executor(self):
         """初始化执行器"""
+        # Request save before initialization to ensure plan is up to date
+        self.saveRequested.emit()
+        
         if not self._plan_data:
             QMessageBox.warning(self, "Warning", "No execution plan set. Please design your flow first.")
             return

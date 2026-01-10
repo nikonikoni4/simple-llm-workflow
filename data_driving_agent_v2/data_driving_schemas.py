@@ -89,6 +89,10 @@ class NodeDefinition(BaseModel):
         default=False,
         description="是否启用工具调用循环。True时LLM可多次调用工具直到完成任务"
     )
+    tools_limit: dict[str, int] | None = Field(
+        default=None,
+        description="当前节点的工具调用次数限制。None时使用执行器默认限制"
+    )
     
     # ===== tool-first 专用 =====
     initial_tool_name: str | None = Field(
@@ -189,6 +193,7 @@ def create_node_definition_schema(
         # 工具配置
         tools=(list[str] | None, Field(default=None, description="可调用的工具列表")),
         enable_tool_loop=(bool, Field(default=False, description="是否启用工具调用循环")),
+        tools_limit=(dict[str, int] | None, Field(default=None, description="当前节点的工具调用次数限制")),
         # tool-first 专用
         initial_tool_name=(str | None, Field(default=None, description="[tool-first专用] 初始工具名称")),
         initial_tool_args=(dict[str, Any] | None, Field(default=None, description="[tool-first专用] 初始工具参数")),
@@ -290,20 +295,29 @@ def get_output_parser(
 
 
 if __name__ == "__main__":
-    # 测试代码
-    print("=" * 60)
-    print("测试动态 Schema 生成")
-    print("=" * 60)
+    # # 测试代码
+    # print("=" * 60)
+    # print("测试动态 Schema 生成")
+    # print("=" * 60)
     
-    # 1. 测试主执行器 Schema
-    print("\n1. 主执行器 Schema (所有权限):")
-    print(f"   允许的类型: {MAIN_EXECUTOR_PERMISSIONS}")
-    main_parser = get_output_parser(MAIN_EXECUTOR_PERMISSIONS)
-    print(f"   格式说明:\n{main_parser.get_format_instructions()}...")
+    # # 1. 测试主执行器 Schema
+    # print("\n1. 主执行器 Schema (所有权限):")
+    # print(f"   允许的类型: {MAIN_EXECUTOR_PERMISSIONS}")
+    # main_parser = get_output_parser(MAIN_EXECUTOR_PERMISSIONS)
+    # print(f"   格式说明:\n{main_parser.get_format_instructions()}...")
     
-    # 2. 测试子执行器 Schema
-    print("\n2. 子执行器 Schema (tool + query):")
-    print(f"   允许的类型: {SUB_EXECUTOR_PERMISSIONS}")
-    sub_parser = get_output_parser(SUB_EXECUTOR_PERMISSIONS)
-    print(f"   格式说明:\n{sub_parser.get_format_instructions()}...")
-    
+    # # 2. 测试子执行器 Schema
+    # print("\n2. 子执行器 Schema (tool + query):")
+    # print(f"   允许的类型: {SUB_EXECUTOR_PERMISSIONS}")
+    # sub_parser = get_output_parser(SUB_EXECUTOR_PERMISSIONS)
+    # print(f"   格式说明:\n{sub_parser.get_format_instructions()}...")
+
+    import os
+    from load_plans import load_plan_from_template
+    # 获取当前脚本所在目录的绝对路径
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    # 构建 json 文件的绝对路径
+    json_path = os.path.join(current_dir, "test_plan", "example", "example.json")
+    plan, tools_limit = load_plan_from_template(json_path=json_path,
+                                              pattern_name="custom")
+    plan.nodes[0].tools_limit 
