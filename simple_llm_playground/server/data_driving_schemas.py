@@ -1,7 +1,7 @@
 from typing import Annotated, TypedDict, Literal, Type, Any
 from pydantic import BaseModel, Field, create_model, model_validator
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
-import operator 
+
 from langchain_core.output_parsers import PydanticOutputParser
 
 # ============================================================================

@@ -1,10 +1,8 @@
 # FastAPI 后端服务
 # 提供 RESTful API 用于前端与 AsyncExecutor 交互
 
-import asyncio
-import uuid
-from datetime import datetime
-from typing import Optional, Any
+
+from typing import Optional
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException, BackgroundTasks
