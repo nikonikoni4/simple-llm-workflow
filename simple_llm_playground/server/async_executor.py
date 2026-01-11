@@ -9,7 +9,7 @@ from typing import Callable, Optional, Any, Coroutine
 from pydantic import BaseModel
 
 from .data_driving_schemas import (
-    Context, NodeDefinition, ExecutionPlan, NodeType, ThreadMeta
+    Context, NodeDefinition, ExecutionPlan, NodeType
 )
 from langchain_core.messages import HumanMessage, AIMessage, ToolMessage
 
@@ -99,9 +99,6 @@ class AsyncExecutor:
                 main_thread_id: [HumanMessage(content=user_message)]
             },
             "data_out": {},
-            "thread_meta": {
-                main_thread_id: {"parent_thread": None}
-            }
         }
 
         # 工具映射
@@ -165,26 +162,24 @@ class AsyncExecutor:
             raise ValueError(f"线程 {thread_id} 不存在")
         self.context["messages"][thread_id].append(message)
 
-    def _create_thread(self, thread_id: str, parent_thread_id: str | None = None, node: NodeDefinition | None = None) -> None:
+    def _create_thread(self, thread_id: str, node: NodeDefinition | None = None) -> None:
         """
         创建新线程，并根据 node 的 data_in 配置注入初始消息
         
         Args:
             thread_id: 新线程ID
-            parent_thread_id: 父线程ID
             node: 节点定义，用于获取 data_in 配置
         """
         if thread_id in self.context["messages"]:
             return  # 线程已存在，直接返回
         
         self.context["messages"][thread_id] = []
-        self.context["thread_meta"][thread_id] = {"parent_thread": parent_thread_id}
-        
         # 处理 data_in：注入初始消息到新线程
         if node is not None:
-            # 确定数据来源线程：优先使用 data_in_thread，否则使用 parent_thread_id
-            source_thread = node.data_in_thread or parent_thread_id
-            
+            # 确定数据来源线程：优先使用 data_in_thread，否则默认为 main
+            source_thread = node.data_in_thread or self.main_thread_id
+            if not node.data_in_thread:
+                logger.warning(f"    ⚠️  data_in: 节点 '{node.node_name}' 没有指定 data_in_thread，使用默认的 main 线程")
             if source_thread and source_thread in self.context["messages"]:
                 source_msgs = self.context["messages"][source_thread]
                 
@@ -210,15 +205,21 @@ class AsyncExecutor:
             "content": f"{description}{content}" if description else content
         }
 
-    def _merge_data_out_to_parent(self, child_thread_id: str) -> None:
-        """将子线程的 data_out 合并到父线程的 messages"""
+    def _merge_data_out(self, child_thread_id: str, target_thread_id: str) -> None:
+        """
+        将子线程的 data_out 合并到目标线程的 messages
+        
+        Args:
+            child_thread_id: 子线程ID（数据来源）
+            target_thread_id: 目标线程ID（由节点的 data_out_thread 决定）
+        """
         if child_thread_id not in self.context["data_out"]:
             return
         
-        parent_id = self.context["thread_meta"].get(child_thread_id, {}).get("parent_thread")
-        if parent_id and parent_id in self.context["messages"]:
+        if target_thread_id and target_thread_id in self.context["messages"]:
             data = self.context["data_out"][child_thread_id]
-            self._add_message_to_thread(parent_id, AIMessage(content=data["content"]))
+            self._add_message_to_thread(target_thread_id, AIMessage(content=data["content"]))
+            logger.debug(f"    → data_out: 从 '{child_thread_id}' 合并到 '{target_thread_id}'")
 
     # =========================================================================
     # 工具管理方法
@@ -730,10 +731,9 @@ class AsyncExecutor:
         )
         
         try:
-            # 确保线程存在，使用节点定义的 parent_thread_id
+            # 确保线程存在
             if node.thread_id not in self.context["messages"]:
-                parent_id = node.parent_thread_id if node.parent_thread_id else self.main_thread_id
-                self._create_thread(node.thread_id, parent_id, node)
+                self._create_thread(node.thread_id, node)
             
             # 使用处理器分发
             handler = self._node_handlers.get(node.node_type)
@@ -746,9 +746,13 @@ class AsyncExecutor:
             # 执行节点
             content = await handler(node)
             
-            # 如果节点设置了 data_out，合并到父线程
+            # 如果节点设置了 data_out，根据 data_out_thread 合并到目标线程
             if node.data_out:
-                self._merge_data_out_to_parent(node.thread_id)
+                # 目标线程由 data_out_thread 决定，若没有则默认为 main
+                if not node.data_out_thread:
+                    logger.warning(f"    ⚠️  data_out: 节点 '{node.node_name}' 没有指定 data_out_thread，使用默认的 main 线程")
+                target_thread = node.data_out_thread if node.data_out_thread else self.main_thread_id
+                self._merge_data_out(node.thread_id, target_thread)
             
             # 记录执行后的线程消息
             messages_after = self._serialize_messages(

@@ -25,27 +25,29 @@ SUB_EXECUTOR_PERMISSIONS: set[NodeType] = {"llm-first", "tool-first"}
 # ============================================================================
 # 线程元信息
 # ============================================================================
-class ThreadMeta(TypedDict):
-    """线程元信息，用于追踪线程父子关系"""
-    parent_thread: str | None  # 父线程ID，主线程为 None
-
 
 class Context(TypedDict):
     """
     执行上下文
-    
+
     结构说明:
     - messages: 按 thread_id 隔离的消息列表
-    - data_out: 子线程向外输出的结果，格式为 {role: 'assistant', content: description + result}
-    - thread_meta: 线程元信息，记录父子关系用于合并时确定目标
-    
-    合并逻辑:
-    当子线程节点 data_out=True 时，将结果写入 data_out[thread_id]
-    执行器会根据 thread_meta[thread_id].parent_thread 将其合并到父线程的 messages 中
+    - data_out: 线程的输出数据，格式为 {role: 'assistant', content: description + result}
+
+    数据流说明（完全由节点配置决定）:
+
+    1. 数据输入 (data_in):
+       - data_in_thread: 指定输入数据来源线程ID，None时使用main线程
+       - data_in_slice: 指定消息切片范围 [start, end)，None时取最后一条消息
+       - 只在新线程创建时执行一次
+
+    2. 数据输出 (data_out):
+       - data_out: 是否将结果输出到data_out字典
+       - data_out_thread: 指定输出合并的目标线程ID，None时使用main线程
+       - data_out_description: 输出内容的描述前缀
     """
     messages: dict[str, list[AIMessage | HumanMessage | ToolMessage]]  # thread_id : messages
     data_out: dict[str, Any]  # thread_id : 输出内容 {role: 'assistant', content: ...}
-    thread_meta: dict[str, ThreadMeta]  # thread_id : 元信息
 
 
 # ============================================================================
@@ -54,11 +56,21 @@ class Context(TypedDict):
 class NodeDefinition(BaseModel):
     """
     节点定义
-    
+
     节点类型说明:
     - llm-first: LLM先执行，可选调用工具。适用于需要先推理再行动的场景
     - tool-first: 工具先执行，然后LLM分析结果。适用于需要先获取数据再分析的场景
-    - planning: 规划节点，生成子计划并递归执行（暂未实现）
+
+    数据流说明（完全由以下配置决定）:
+
+    1. 数据输入 - 新线程创建时执行一次:
+       - data_in_thread: 输入数据来源线程ID，None时使用main线程
+       - data_in_slice: 消息切片范围 [start, end)，None时取最后一条消息
+
+    2. 数据输出 - 节点执行后决定是否合并:
+       - data_out: 是否将结果输出到data_out字典并合并到目标线程
+       - data_out_thread: 输出合并的目标线程ID，None时使用main线程
+       - data_out_description: 输出内容的描述前缀
     """
     
     # ===== 核心标识 =====
@@ -69,10 +81,6 @@ class NodeDefinition(BaseModel):
     
     # ===== 线程配置 =====
     thread_id: str = Field(description="当前节点的线程ID")
-    parent_thread_id: str | None = Field(
-        default=None, 
-        description="父线程ID，用于确定合并目标。主线程节点为None"
-    )
     
     # ===== LLM 配置 =====
     task_prompt: str = Field(
@@ -106,18 +114,22 @@ class NodeDefinition(BaseModel):
     
     # ===== 数据输入配置 =====
     data_in_thread: str | None = Field(
-        default=None, 
-        description="输入数据来源线程ID。None时使用parent_thread_id"
+        default=None,
+        description="输入数据来源线程ID，None时使用main线程"
     )
     data_in_slice: tuple[int | None, int | None] | None = Field(
-        default=None, 
-        description="消息切片范围 [start, end)。None时取最后一条消息"
+        default=None,
+        description="消息切片范围 [start, end)，None时取最后一条消息"
     )
-    
+
     # ===== 数据输出配置 =====
+    data_out_thread: str | None = Field(
+        default=None,
+        description="输出合并的目标线程ID，None时使用main线程"
+    )
     data_out: bool = Field(
-        default=False, 
-        description="是否将结果输出到父线程"
+        default=False,
+        description="是否将结果输出到data_out字典并合并到目标线程"
     )
     data_out_description: str = Field(
         default="", 
@@ -189,7 +201,6 @@ def create_node_definition_schema(
         node_name=(str, Field(description="节点名称")),
         task_prompt=(str, Field(default="", description="LLM的任务描述")),
         thread_id=(str, Field(description="线程ID")),
-        parent_thread_id=(str | None, Field(default=None, description="父线程ID")),
         # 工具配置
         tools=(list[str] | None, Field(default=None, description="可调用的工具列表")),
         enable_tool_loop=(bool, Field(default=False, description="是否启用工具调用循环")),
@@ -198,9 +209,10 @@ def create_node_definition_schema(
         initial_tool_name=(str | None, Field(default=None, description="[tool-first专用] 初始工具名称")),
         initial_tool_args=(dict[str, Any] | None, Field(default=None, description="[tool-first专用] 初始工具参数")),
         # 数据配置
-        data_in_thread=(str | None, Field(default=None, description="输入数据来源线程ID")),
-        data_in_slice=(tuple[int | None, int | None] | None, Field(default=None, description="消息切片范围")),
-        data_out=(bool, Field(default=False, description="是否输出到父线程")),
+        data_in_thread=(str | None, Field(default=None, description="输入数据来源线程ID，None时使用main线程")),
+        data_in_slice=(tuple[int | None, int | None] | None, Field(default=None, description="消息切片范围 [start, end)，None时取最后一条消息")),
+        data_out_thread=(str | None, Field(default=None, description="输出合并的目标线程ID，None时使用main线程")),
+        data_out=(bool, Field(default=False, description="是否将结果输出到data_out字典并合并到目标线程")),
         data_out_description=(str, Field(default="", description="输出内容描述前缀"))
     )
 
