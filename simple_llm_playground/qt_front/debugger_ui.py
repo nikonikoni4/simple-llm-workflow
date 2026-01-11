@@ -381,7 +381,11 @@ class NodeItem(QGraphicsItem):
         # These will be positioned dynamically in paint method
         self.left_swap_rect = QRectF(0, 0, 0, 0)  # Will be set in paint
         self.right_swap_rect = QRectF(0, 0, 0, 0)  # Will be set in paint
-        self.hover_swap_button = None  # Track which button is hovered: 'left', 'right', or None
+        self.hover_swap_button = None  # Track which button is hovered: 'left', 'right', 'up', 'down', or None
+        
+        # Thread swap buttons (up and down arrows for thread position)
+        self.up_thread_rect = QRectF(0, 0, 0, 0)  # Will be set in paint
+        self.down_thread_rect = QRectF(0, 0, 0, 0)  # Will be set in paint
         
         # Rule 1: Fixed positions. Disable Movable flag always.
         self.is_fixed = True 
@@ -548,9 +552,93 @@ class NodeItem(QGraphicsItem):
         
         # Thread ID text (after buttons)
         thread_x_offset = right_button_x + button_size + 4
+        # Calculate thread button area first to avoid overlap
+        thread_button_size = 14
+        thread_button_x = self.width - 50  # Position before output anchor, leave more space
+        # Limit thread ID text to not overlap with buttons
+        thread_text_width = thread_button_x - thread_x_offset - 4  # Leave 4px gap before buttons
         painter.setPen(self.subtext_color)
-        painter.drawText(QRectF(thread_x_offset, button_y, self.width - thread_x_offset - 10, button_size),
+        painter.drawText(QRectF(thread_x_offset, button_y, max(thread_text_width, 50), button_size),
                          Qt.AlignLeft | Qt.AlignVCenter, f"| {thread_id}")
+        
+        # Draw thread swap buttons (up and down arrows on the right side, before output anchor)
+        # Position buttons to avoid overlap with output anchor (which is at width-12, height/2)
+        thread_button_y_start = button_y
+        
+        # #region agent log
+        import json
+        try:
+            with open(r'd:\desktop\simple-llm-playground\.cursor\debug.log', 'a', encoding='utf-8') as f:
+                f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"A","location":"debugger_ui.py:563","message":"Button position calculation","data":{"thread_button_x":thread_button_x,"thread_button_y_start":thread_button_y_start,"button_y":button_y,"thread_x_offset":thread_x_offset,"width":self.width,"thread_id":thread_id},"timestamp":int(__import__('time').time()*1000)}) + '\n')
+        except: pass
+        # #endregion
+        
+        # Up button (only show if thread_view_index > 0, meaning not the topmost thread)
+        thread_view_index = self.node_data.get("thread_view_index", 0)
+        if thread_view_index > 0:
+            self.up_thread_rect = QRectF(thread_button_x, thread_button_y_start, thread_button_size, thread_button_size)
+            # Draw button background
+            if self.hover_swap_button == 'up':
+                painter.setBrush(QColor("#4a90e2"))
+            else:
+                painter.setBrush(QColor("#3e3e3e"))
+            painter.setPen(QPen(QColor("#555555"), 1))
+            painter.drawRoundedRect(self.up_thread_rect, 3, 3)
+            
+            # Draw up arrow
+            painter.setPen(QPen(QColor("#ffffff"), 2))
+            arrow_center_x = self.up_thread_rect.center().x()
+            arrow_center_y = self.up_thread_rect.center().y()
+            painter.drawLine(int(arrow_center_x), int(arrow_center_y + 2),
+                           int(arrow_center_x), int(arrow_center_y - 2))
+            painter.drawLine(int(arrow_center_x), int(arrow_center_y - 2),
+                           int(arrow_center_x - 3), int(arrow_center_y))
+            painter.drawLine(int(arrow_center_x), int(arrow_center_y - 2),
+                           int(arrow_center_x + 3), int(arrow_center_y))
+        else:
+            self.up_thread_rect = QRectF(0, 0, 0, 0)
+        
+        # Down button (always show, will check validity on click)
+        # Position down button below up button with proper spacing
+        # If up button exists, place down button below it; otherwise use same Y as up button would be
+        if thread_view_index > 0:
+            down_button_y = thread_button_y_start + thread_button_size + 2
+        else:
+            # No up button, so down button can be at the same Y position
+            down_button_y = thread_button_y_start
+        
+        # Ensure down button doesn't exceed node bounds
+        max_y = self.height - thread_button_size - 4
+        if down_button_y > max_y:
+            down_button_y = max_y
+        
+        self.down_thread_rect = QRectF(thread_button_x, down_button_y, thread_button_size, thread_button_size)
+        
+        # #region agent log
+        try:
+            with open(r'd:\desktop\simple-llm-playground\.cursor\debug.log', 'a', encoding='utf-8') as f:
+                f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"A","location":"debugger_ui.py:615","message":"Down button rect calculated","data":{"down_button_y":down_button_y,"thread_button_x":thread_button_x,"thread_button_size":thread_button_size,"thread_x_offset":thread_x_offset,"thread_view_index":thread_view_index,"node_height":self.height},"timestamp":int(__import__('time').time()*1000)}) + '\n')
+        except: pass
+        # #endregion
+        
+        # Draw button background
+        if self.hover_swap_button == 'down':
+            painter.setBrush(QColor("#4a90e2"))
+        else:
+            painter.setBrush(QColor("#3e3e3e"))
+        painter.setPen(QPen(QColor("#555555"), 1))
+        painter.drawRoundedRect(self.down_thread_rect, 3, 3)
+        
+        # Draw down arrow
+        painter.setPen(QPen(QColor("#ffffff"), 2))
+        arrow_center_x = self.down_thread_rect.center().x()
+        arrow_center_y = self.down_thread_rect.center().y()
+        painter.drawLine(int(arrow_center_x), int(arrow_center_y - 2),
+                       int(arrow_center_x), int(arrow_center_y + 2))
+        painter.drawLine(int(arrow_center_x), int(arrow_center_y + 2),
+                       int(arrow_center_x - 3), int(arrow_center_y))
+        painter.drawLine(int(arrow_center_x), int(arrow_center_y + 2),
+                       int(arrow_center_x + 3), int(arrow_center_y))
         
         # Draw output anchor (green circle)
         painter.setBrush(QColor("#4CAF50"))
@@ -595,15 +683,33 @@ class NodeItem(QGraphicsItem):
         
         old_hover = self.hover_swap_button
         
+        # #region agent log
+        try:
+            import json
+            with open(r'd:\desktop\simple-llm-playground\.cursor\debug.log', 'a', encoding='utf-8') as f:
+                f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"E","location":"debugger_ui.py:592","message":"Hover move event","data":{"local_pos_x":local_pos.x(),"local_pos_y":local_pos.y(),"down_thread_rect":str(self.down_thread_rect),"old_hover":old_hover},"timestamp":int(__import__('time').time()*1000)}) + '\n')
+        except: pass
+        # #endregion
+        
         if self.left_swap_rect.contains(local_pos):
             self.hover_swap_button = 'left'
         elif self.right_swap_rect.contains(local_pos):
             self.hover_swap_button = 'right'
+        elif self.up_thread_rect.contains(local_pos):
+            self.hover_swap_button = 'up'
+        elif self.down_thread_rect.contains(local_pos):
+            self.hover_swap_button = 'down'
         else:
             self.hover_swap_button = None
         
         # Repaint if hover state changed
         if old_hover != self.hover_swap_button:
+            # #region agent log
+            try:
+                with open(r'd:\desktop\simple-llm-playground\.cursor\debug.log', 'a', encoding='utf-8') as f:
+                    f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"E","location":"debugger_ui.py:610","message":"Hover state changed","data":{"old_hover":old_hover,"new_hover":self.hover_swap_button},"timestamp":int(__import__('time').time()*1000)}) + '\n')
+            except: pass
+            # #endregion
             self.update()
         
         super().hoverMoveEvent(event)
@@ -1143,6 +1249,14 @@ class NodeGraphView(QGraphicsView):
                 # Swap with right neighbor
                 self.swap_nodes(item, 1)
                 return
+            elif item.up_thread_rect.contains(local_pos):
+                # Move thread up
+                self.swap_threads(item, -1)
+                return
+            elif item.down_thread_rect.contains(local_pos):
+                # Move thread down
+                self.swap_threads(item, 1)
+                return
             elif item.output_anchor_rect.contains(local_pos):
                 # Start connection drag
                 self.dragging_connection = True
@@ -1391,6 +1505,78 @@ class NodeGraphView(QGraphicsView):
         self.update_connections()
         
         print(f"Swapped nodes: {current_id} ↔ {target_id}")
+
+    def swap_threads(self, item, direction):
+        """
+        Swap thread position with adjacent thread.
+        
+        Args:
+            item: The NodeItem whose thread should be moved
+            direction: -1 for up (move thread up), 1 for down (move thread down)
+        """
+        current_thread_id = item.node_data.get("thread_id", "main")
+        current_thread_index = item.node_data.get("thread_view_index", 0)
+        target_thread_index = current_thread_index + direction
+        
+        # Validate target index
+        if target_thread_index < 0:
+            print(f"Cannot move thread: target index {target_thread_index} is invalid (must be >= 0)")
+            return
+        
+        # Find target thread (thread with target_thread_index)
+        target_thread_id = None
+        for tid, idx in self.thread_view_indices.items():
+            if idx == target_thread_index:
+                target_thread_id = tid
+                break
+        
+        if not target_thread_id:
+            print(f"Cannot move thread: no thread found with index {target_thread_index}")
+            return
+        
+        # Swap thread_view_indices
+        self.thread_view_indices[current_thread_id] = target_thread_index
+        self.thread_view_indices[target_thread_id] = current_thread_index
+        
+        # Get all nodes
+        nodes = [i for i in self.scene.items() if isinstance(i, NodeItem)]
+        
+        # Update all nodes in both threads
+        thread_gap_y = 120
+        for node in nodes:
+            node_thread_id = node.node_data.get("thread_id", "main")
+            if node_thread_id == current_thread_id:
+                # Update thread_view_index for all nodes in current thread
+                node.node_data["thread_view_index"] = target_thread_index
+                # Recalculate Y position
+                new_y = self.main_y_baseline - (target_thread_index * thread_gap_y)
+                node.setPos(node.x(), new_y)
+                # #region agent log
+                try:
+                    import json
+                    with open(r'd:\desktop\simple-llm-playground\.cursor\debug.log', 'a', encoding='utf-8') as f:
+                        f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"C","location":"debugger_ui.py:1506","message":"Node position updated after thread swap","data":{"node_id":node.node_data.get("id"),"thread_id":node_thread_id,"new_thread_view_index":target_thread_index,"new_y":new_y,"old_y":node.y()},"timestamp":int(__import__('time').time()*1000)}) + '\n')
+                except: pass
+                # #endregion
+                node.update()
+            elif node_thread_id == target_thread_id:
+                # Update thread_view_index for all nodes in target thread
+                node.node_data["thread_view_index"] = current_thread_index
+                # Recalculate Y position
+                new_y = self.main_y_baseline - (current_thread_index * thread_gap_y)
+                node.setPos(node.x(), new_y)
+                # #region agent log
+                try:
+                    with open(r'd:\desktop\simple-llm-playground\.cursor\debug.log', 'a', encoding='utf-8') as f:
+                        f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"C","location":"debugger_ui.py:1514","message":"Node position updated after thread swap","data":{"node_id":node.node_data.get("id"),"thread_id":node_thread_id,"new_thread_view_index":current_thread_index,"new_y":new_y},"timestamp":int(__import__('time').time()*1000)}) + '\n')
+                except: pass
+                # #endregion
+                node.update()
+        
+        # Update all connections
+        self.update_connections()
+        
+        print(f"Swapped threads: {current_thread_id} (index {current_thread_index}) ↔ {target_thread_id} (index {target_thread_index})")
 
     def add_node_at_center(self):
         # Always add to main axis at main_y_baseline
