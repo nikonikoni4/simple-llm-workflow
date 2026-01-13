@@ -1,6 +1,6 @@
 from PyQt5.QtWidgets import QGroupBox, QVBoxLayout, QTextBrowser
 from simple_llm_playground.qt_front.utils import CollapsibleSection
-
+from simple_llm_playground.schemas import NodeProperties
 class NodeContextPanel(QGroupBox):
     """用于显示节点线程上下文信息的面板"""
     def __init__(self):
@@ -41,13 +41,13 @@ class NodeContextPanel(QGroupBox):
         
         self.setLayout(self.main_layout)
     
-    def load_node_context(self, node_data):
+    def load_node_context(self, node_data: NodeProperties):
         """加载并显示节点的上下文信息"""
         # 目前仅显示占位文本
         # 未来将填充真实的执行数据
         
-        node_name = node_data.get("node_name", "Unknown")
-        thread_id = node_data.get("thread_id", "main")
+        node_name = node_data.node_name
+        thread_id = node_data.thread_id
         
         # 上下文信息
         context_html = f"""

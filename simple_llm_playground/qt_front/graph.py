@@ -4,8 +4,8 @@ from PyQt5.QtGui import QPen, QBrush, QColor, QWheelEvent, QPainter, QPainterPat
 import random
 import json
 from simple_llm_playground.qt_front.utils import NODE_COLORS, THREAD_COLORS
-from simple_llm_playground.schemas import NodeProperties
-from typing import Union
+from simple_llm_playground.schemas import NodeProperties, GuiExecutionPlan
+from typing import Union, Dict, Optional, List
 class NodeItem(QGraphicsItem):
     """
     自定义节点项，具有圆角、页眉和阴影。
@@ -487,7 +487,9 @@ class NodeGraphScene(QGraphicsScene):
         painter.drawLines(lines)
 
 class NodeGraphView(QGraphicsView):
-    nodeSelected = pyqtSignal(dict) # 选中节点时发送节点数据
+    nodeSelected = pyqtSignal(NodeProperties)  # 选中节点时发送节点数据
+    patternListChanged = pyqtSignal(list)  # 加载文件后发送 pattern 名称列表
+    currentPatternChanged = pyqtSignal(str, object)  # 切换 pattern 时发送 (pattern_name, plan)
 
     def __init__(self):
         super().__init__()
@@ -508,15 +510,18 @@ class NodeGraphView(QGraphicsView):
         self.drag_temp_line = None
         
         # 线程视图索引管理
-        self.thread_view_indices = {} # thread_id -> index (int)
+        self.thread_view_indices = {}  # thread_id -> index (int)
         
-        # 测试数据 - 放置在左下角区域 (在 Qt 中 Y 轴正方向向下)
-        # 使用 Y=200 作为主线程的基准线 (出现在屏幕较低区域)
+        # === 多 Pattern 数据存储 ===
+        self.all_plans: Dict[str, GuiExecutionPlan] = {}  # pattern_name -> GuiExecutionPlan
+        self.current_pattern: str = ""  # 当前显示的 pattern 名称
+        self.current_file_path: Optional[str] = None  # 当前加载的文件路径
+        
+        # 主线程基准线
         self.main_y_baseline = 200
-        self.add_node({"node_name": "main", "node_type": "llm-first", "thread_id": "main", "task_prompt": "", "fixed": True, "thread_view_index": 0}, 0, self.main_y_baseline)
         
-        # 将视图中心对准左下角区域，使第一个节点显示在屏幕左下角
-        # 将中心向右和向下偏移，使第一个节点定位在左下角
+        # 不再硬编码初始节点，由 load_from_file 或手动添加
+        # 将视图中心对准左下角区域
         self.center_to_bottom_left()
         
         # 添加覆盖按钮
@@ -581,12 +586,22 @@ class NodeGraphView(QGraphicsView):
     def update_connections(self):
         """基于当前节点重新构建所有连接线"""
         # 清除现有连接
+        # 注意：需要检查对象是否仍然有效，因为 scene.clear() 可能已删除底层 C++ 对象
+        import sip
         for line in self.scene.connection_lines:
-            self.scene.removeItem(line)
+            try:
+                if not sip.isdeleted(line):
+                    self.scene.removeItem(line)
+            except RuntimeError:
+                pass  # 对象已被删除，忽略
         self.scene.connection_lines.clear()
         
         for merge in self.scene.merge_nodes:
-            self.scene.removeItem(merge)
+            try:
+                if not sip.isdeleted(merge):
+                    self.scene.removeItem(merge)
+            except RuntimeError:
+                pass  # 对象已被删除，忽略
         self.scene.merge_nodes.clear()
         
         # 获取所有按 ID 排序的节点
@@ -933,12 +948,12 @@ class NodeGraphView(QGraphicsView):
             
             if target:
                 # 校验: source.id < target.id
-                source_id = self.drag_start_item.node_data.get("id", 0)
-                target_id = target.node_data.get("id", 0)
+                source_id = self.drag_start_item.node_data.node_id
+                target_id = target.node_data.node_id
                 
                 if source_id < target_id:
                     # 创建 data_in 连接
-                    source_thread = self.drag_start_item.node_data.get("thread_id", "main")
+                    source_thread = self.drag_start_item.node_data.thread_id
                     target.node_data.data_in_thread = source_thread
                     target.node_data.data_in_slice = (-1, None)  # 默认: 最后一条消息
                     print(f"Created connection: {source_thread} -> Node {target_id}")
@@ -980,14 +995,14 @@ class NodeGraphView(QGraphicsView):
     def add_new_node_from(self, parent_item):
         # 扩展: 同一 Y 层级，同一线程
         new_y = parent_item.y()
-        parent_thread = parent_item.node_data.get("thread_id", "main")
+        parent_thread = parent_item.node_data.thread_id
         
         new_data = {
             "node_name": "New Node", 
             "node_type": "llm-first", 
             "thread_id": parent_thread,
             "task_prompt": "",
-            "parent_id": parent_item.node_data.get("id")
+            "parent_id": parent_item.node_data.node_id
         }
         self.add_node(new_data, 0, new_y)
         self.update_connections()
@@ -995,7 +1010,7 @@ class NodeGraphView(QGraphicsView):
     def add_branch_from(self, parent_item):
         # 分支: 向上放置 (在 Qt 中为负 Y)
         new_y = parent_item.y() - 120
-        parent_thread = parent_item.node_data.get("thread_id", "main")
+        parent_thread = parent_item.node_data.thread_id
         
         # 为分支创建新的线程 ID
         new_thread_id = f"branch_{self.next_node_id}"
@@ -1013,7 +1028,7 @@ class NodeGraphView(QGraphicsView):
             "thread_id": new_thread_id,
             "parent_thread_id": parent_thread,
             "task_prompt": "",
-            "parent_id": parent_item.node_data.get("id"),
+            "parent_id": parent_item.node_data.node_id,
             "thread_view_index": next_idx
         }
 
@@ -1045,7 +1060,7 @@ class NodeGraphView(QGraphicsView):
         删除该节点所属的整个线程。
         应用特定的偏移逻辑: '其他小于其线程坐标 ID 的 ID + 1'
         """
-        thread_id = item.node_data.get("thread_id", "main")
+        thread_id = item.node_data.thread_id
         if thread_id == "main":
             print("Cannot delete main thread yet")
             return
@@ -1057,7 +1072,7 @@ class NodeGraphView(QGraphicsView):
         # 1. 移除该线程的所有节点
         nodes_to_remove = []
         for i in self.scene.items():
-            if isinstance(i, NodeItem) and i.node_data.get("thread_id") == thread_id:
+            if isinstance(i, NodeItem) and i.node_data.thread_id == thread_id:
                 nodes_to_remove.append(i)
         
         for node in nodes_to_remove:
@@ -1074,7 +1089,7 @@ class NodeGraphView(QGraphicsView):
         # 3. 更新所有剩余节点的位置
         remaining_nodes = [i for i in self.scene.items() if isinstance(i, NodeItem)]
         for node in remaining_nodes:
-            tid = node.node_data.get("thread_id", "main")
+            tid = node.node_data.thread_id
             if tid in self.thread_view_indices:
                 new_idx = self.thread_view_indices[tid]
                 node.node_data.thread_view_index= new_idx
@@ -1091,7 +1106,7 @@ class NodeGraphView(QGraphicsView):
             item: 要交换的 NodeItem
             direction: -1 代表向左交换, 1 代表向右交换
         """
-        current_id = item.node_data.get("id", 0)
+        current_id = item.node_data.node_id
         target_id = current_id + direction
         
         # 保护 ID=1 的节点 - 它不能被交换
@@ -1115,7 +1130,7 @@ class NodeGraphView(QGraphicsView):
         # 查找目标节点
         target_node = None
         for node in nodes:
-            if node.node_data.get("id") == target_id:
+            if node.node_data.node_id == target_id:
                 target_node = node
                 break
         
@@ -1148,8 +1163,8 @@ class NodeGraphView(QGraphicsView):
             item: 线程应被移动的 NodeItem
             direction: -1 代表向上 (线程上移), 1 代表向下 (线程下移)
         """
-        current_thread_id = item.node_data.get("thread_id", "main")
-        current_thread_index = item.node_data.get("thread_view_index", 0)
+        current_thread_id = item.node_data.thread_id
+        current_thread_index = item.node_data.thread_view_index
         target_thread_index = current_thread_index + direction
         
         # 验证目标索引
@@ -1178,7 +1193,7 @@ class NodeGraphView(QGraphicsView):
         # 更新两个线程中的所有节点
         thread_gap_y = 120
         for node in nodes:
-            node_thread_id = node.node_data.get("thread_id", "main")
+            node_thread_id = node.node_data.thread_id
             if node_thread_id == current_thread_id:
                 # 为当前线程中的所有节点更新 thread_view_index
                 node.node_data.thread_view_index = target_thread_index
@@ -1209,5 +1224,183 @@ class NodeGraphView(QGraphicsView):
             "task_prompt": ""
         }
         self.add_node(new_data, 0, self.main_y_baseline)
+
+    # ==================== 多 Pattern 数据管理 ====================
+    
+    def load_from_file(self, file_path: str) -> List[str]:
+        """
+        从文件加载所有 patterns
+        
+        参数:
+            file_path: JSON 文件路径
+            
+        返回:
+            pattern 名称列表（用于填充 ComboBox）
+        """
+        from llm_linear_executor.os_plan import load_plans_from_templates
+        
+        self.all_plans = load_plans_from_templates(file_path, schema=GuiExecutionPlan)
+        self.current_file_path = file_path
+        patterns = list(self.all_plans.keys())
+        
+        # 自动加载第一个 pattern
+        if patterns:
+            self._load_plan_to_scene(self.all_plans[patterns[0]])
+            self.current_pattern = patterns[0]
+        
+        # 发送信号通知 pattern 列表已更新
+        self.patternListChanged.emit(patterns)
+        return patterns
+    
+    def switch_pattern(self, pattern_name: str) -> bool:
+        """
+        切换到指定的 pattern
+        会先保存当前 pattern 的修改
+        
+        参数:
+            pattern_name: 要切换到的 pattern 名称
+            
+        返回:
+            是否切换成功
+        """
+        if pattern_name not in self.all_plans:
+            print(f"Warning: Pattern '{pattern_name}' not found")
+            return False
+        
+        if pattern_name == self.current_pattern:
+            return True  # 已经是当前 pattern，无需操作
+        
+        # 1. 保存当前 pattern 的最新数据
+        self._save_current_to_plans()
+        
+        # 2. 切换到新 pattern
+        self.current_pattern = pattern_name
+        plan = self.all_plans[pattern_name]
+        self._load_plan_to_scene(plan)
+        
+        # 3. 发送信号
+        self.currentPatternChanged.emit(pattern_name, plan)
+        return True
+    
+    def _save_current_to_plans(self):
+        """将当前场景中的节点数据保存回 all_plans"""
+        if self.current_pattern and self.current_pattern in self.all_plans:
+            nodes = self.get_all_nodes_data()
+            self.all_plans[self.current_pattern].nodes = nodes
+            # 同步 thread_view_indices
+            self.all_plans[self.current_pattern].thread_view_indices = self.thread_view_indices.copy()
+    
+    def _load_plan_to_scene(self, plan: GuiExecutionPlan):
+        """
+        将 plan 中的节点加载到场景中
+        
+        直接使用 plan 中预计算好的坐标，不重新计算布局
+        """
+        # 清空场景（保留按钮等 UI 元素）
+        self.clear_nodes()
+        
+        # 重置颜色映射
+        self.thread_color_map.clear()
+        
+        # 同步 thread_view_indices
+        self.thread_view_indices = plan.thread_view_indices.copy()
+        
+        # 创建节点
+        for node in plan.nodes:
+            thread_color = self.get_thread_color(node.thread_id)
+            item = NodeItem(node, thread_color=thread_color)
+            self.scene.addItem(item)
+        
+        # 更新 next_node_id 为 max + 1
+        if plan.nodes:
+            self.next_node_id = max(n.node_id for n in plan.nodes) + 1
+        else:
+            self.next_node_id = 1
+        
+        # 更新连接线
+        self.update_connections()
+        
+        # 居中视图到第一个节点
+        self.center_to_bottom_left()
+    
+    def get_current_plan(self) -> Optional[GuiExecutionPlan]:
+        """
+        获取当前 pattern 的 plan（包含最新修改）
+        
+        返回:
+            当前的 GuiExecutionPlan，如果没有则返回 None
+        """
+        self._save_current_to_plans()
+        return self.all_plans.get(self.current_pattern)
+    
+    def get_all_plans(self) -> Dict[str, GuiExecutionPlan]:
+        """
+        获取所有 plans（包含当前 pattern 的最新修改）
+        
+        返回:
+            pattern_name -> GuiExecutionPlan 的字典
+        """
+        self._save_current_to_plans()
+        return self.all_plans
+    
+    def save_to_file(self, file_path: Optional[str] = None) -> bool:
+        """
+        保存所有 plans 到文件
+        
+        参数:
+            file_path: 保存路径，如果为 None 则使用原加载路径
+            
+        返回:
+            是否保存成功
+        """
+        path = file_path or self.current_file_path
+        if not path:
+            print("Error: No file path specified for saving")
+            return False
+        
+        # 确保当前 pattern 的数据已更新
+        self._save_current_to_plans()
+        
+        try:
+            # 构建保存格式：将所有 plans 合并到一个 JSON 中
+            # 格式: {"patterns": {"pattern1": {...}, "pattern2": {...}}}
+            all_data = {}
+            for pattern_name, plan in self.all_plans.items():
+                all_data[pattern_name] = plan.model_dump(exclude_none=True)
+            
+            output = {"patterns": all_data}
+            
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(output, f, indent=2, ensure_ascii=False)
+            
+            self.current_file_path = path
+            print(f"Saved {len(self.all_plans)} patterns to {path}")
+            return True
+        except Exception as e:
+            print(f"Error saving to file: {e}")
+            import traceback
+            traceback.print_exc()
+            return False
+    
+    def update_current_task(self, task: str):
+        """
+        更新当前 pattern 的 task
+        
+        参数:
+            task: 新的 task 内容
+        """
+        if self.current_pattern and self.current_pattern in self.all_plans:
+            self.all_plans[self.current_pattern].task = task
+    
+    def get_current_task(self) -> str:
+        """
+        获取当前 pattern 的 task
+        
+        返回:
+            task 字符串，如果没有则返回空字符串
+        """
+        if self.current_pattern and self.current_pattern in self.all_plans:
+            return self.all_plans[self.current_pattern].task or ""
+        return ""
 
 

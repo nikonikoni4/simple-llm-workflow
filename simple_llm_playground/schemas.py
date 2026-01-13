@@ -28,7 +28,6 @@ class NodeProperties(NodeDefinition):
     x: int = Field(default=0, description="UI X坐标")
     y: int = Field(default=0, description="UI Y坐标")
 
-
 class GuiExecutionPlan(ExecutionPlan):
     """
     前端专用执行计划
@@ -46,7 +45,7 @@ class GuiExecutionPlan(ExecutionPlan):
     - y: 由 thread_view_index 决定的垂直位置
     """
     nodes: list[NodeProperties] = Field(description="包含 UI 布局信息的节点列表")
-
+    thread_view_indices: dict[str, int] = Field(default={},description="thread_id 到 thread_view_index 的映射")
     @model_validator(mode='after')
     def _init_nodes(self) -> 'GuiExecutionPlan':
         """
@@ -58,9 +57,6 @@ class GuiExecutionPlan(ExecutionPlan):
         3. x: node_id * NODE_GAP_X
         4. y: MAIN_Y_BASELINE - (thread_view_index * THREAD_GAP_Y)
         """
-        # 记录 thread_id 到 thread_view_index 的映射
-        thread_view_indices: dict[str, int] = {}
-        
         for idx, node in enumerate(self.nodes):
             # 1. 分配 node_id (1-indexed)
             node.node_id = idx + 1
@@ -72,21 +68,21 @@ class GuiExecutionPlan(ExecutionPlan):
             # 如果已有值，优先使用已保存的值
             if node.thread_view_index != 0 or (tid == "main" and node.thread_view_index == 0):
                 # 如果节点已有非0的 thread_view_index，或是 main 线程（默认0是正确的），使用它
-                if tid not in thread_view_indices:
-                    thread_view_indices[tid] = node.thread_view_index
+                if tid not in self.thread_view_indices:
+                    self.thread_view_indices[tid] = node.thread_view_index
             
-            if tid not in thread_view_indices:
+            if tid not in self.thread_view_indices:
                 # 为新的 thread_id 分配索引
                 # main 线程为 0，其他线程依次递增
                 if tid == "main":
-                    thread_view_indices[tid] = 0
+                    self.thread_view_indices[tid] = 0
                 else:
                     # 分配新索引: max + 1
-                    current_indices = list(thread_view_indices.values())
+                    current_indices = list(self.thread_view_indices.values())
                     next_idx = max(current_indices) + 1 if current_indices else 1
-                    thread_view_indices[tid] = next_idx
+                    self.thread_view_indices[tid] = next_idx
             
-            node.thread_view_index = thread_view_indices[tid]
+            node.thread_view_index = self.thread_view_indices[tid]
             
             # 3. 计算 x 坐标 (如果当前为默认值0，才重新计算)
             if node.x == 0:
@@ -150,3 +146,8 @@ class ExecutionResultResponse(BaseModel):
     content: Optional[str]
     tokens_usage: dict
     message: str
+
+if __name__ == "__main__":
+    from llm_linear_executor.os_plan import load_plans_from_templates
+    plans = load_plans_from_templates(r"llm_linear_executor\example\example1\example.json", schema=GuiExecutionPlan)
+    print(plans)

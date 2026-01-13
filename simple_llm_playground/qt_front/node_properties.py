@@ -1,3 +1,5 @@
+from typing import Optional
+
 from PyQt5.QtWidgets import (QGroupBox, QVBoxLayout, QWidget, QHBoxLayout, QFormLayout, 
                              QLineEdit, QComboBox, QTextEdit, QCheckBox, QLabel, QFrame, 
                              QSpinBox, QScrollArea, QTabWidget, QPushButton, QDoubleSpinBox)
@@ -49,7 +51,7 @@ class NodePropertyEditor(QGroupBox):
         self.columns_layout.addLayout(self.left_form, 1)
         self.columns_layout.addLayout(self.right_form, 1)
         
-        self.current_node_data = None
+        self.current_node_data: Optional[NodeProperties] = None
         self._loading_data = False  # 用于防止加载期间自动保存的标志
         self._available_tools = {}  # 缓存从后端获取的可用工具
         
@@ -276,23 +278,34 @@ class NodePropertyEditor(QGroupBox):
         # 从后端加载可用工具
         self.load_available_tools()
 
-    def _get_node_val(self, key, default=None):
-        """兼容字典和 Pydantic 模型的获取方法"""
+    def _get_node_val(self, key: str, default=None):
+        """
+        从 NodeProperties 模型获取属性值
+        
+        支持向后兼容字典类型，但主要用于 NodeProperties Pydantic 模型
+        """
         if self.current_node_data is None:
             return default
         if isinstance(self.current_node_data, dict):
+            # 向后兼容：支持旧的字典格式
             return self.current_node_data.get(key, default)
         else:
+            # NodeProperties Pydantic 模型
             return getattr(self.current_node_data, key, default)
 
-    def _set_node_val(self, key, value):
-        """兼容字典和 Pydantic 模型的设置方法"""
+    def _set_node_val(self, key: str, value):
+        """
+        设置 NodeProperties 模型的属性值
+        
+        支持向后兼容字典类型，但主要用于 NodeProperties Pydantic 模型
+        """
         if self.current_node_data is None:
             return
         if isinstance(self.current_node_data, dict):
+            # 向后兼容：支持旧的字典格式
             self.current_node_data[key] = value
         else:
-            # Pydantic 模型 setter
+            # NodeProperties Pydantic 模型 setter
             if hasattr(self.current_node_data, key):
                 setattr(self.current_node_data, key, value)
             # else: 忽略模型中不存在的字段
@@ -433,7 +446,7 @@ class NodePropertyEditor(QGroupBox):
             if w: w.setVisible(is_tool_first)
 
 
-    def load_node(self, node_data, is_first_in_thread=False):
+    def load_node(self, node_data: NodeProperties, is_first_in_thread: bool = False):
         # 加载期间禁用自动保存
         self._loading_data = True
         
