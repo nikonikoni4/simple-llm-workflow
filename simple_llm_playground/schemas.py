@@ -57,6 +57,16 @@ class GuiExecutionPlan(ExecutionPlan):
         3. x: node_id * NODE_GAP_X
         4. y: MAIN_Y_BASELINE - (thread_view_index * THREAD_GAP_Y)
         """
+        # 0. 检查首节点是否为 main 线程，若不是则插入默认 main 节点
+        if not self.nodes or self.nodes[0].thread_id != "main":
+            empty_main_node = NodeProperties(
+                node_type="llm-first",
+                node_name="Main Start",
+                thread_id="main",
+                task_prompt="Start of main thread",
+            )
+            self.nodes.insert(0, empty_main_node)
+
         for idx, node in enumerate(self.nodes):
             # 1. 分配 node_id (1-indexed)
             node.node_id = idx + 1
