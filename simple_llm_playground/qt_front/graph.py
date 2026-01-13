@@ -604,6 +604,9 @@ class NodeGraphView(QGraphicsView):
                 pass  # 对象已被删除，忽略
         self.scene.merge_nodes.clear()
         
+        # 策略：全量刷新。先清空场景中所有旧线和合并节点，再根据最新数据模型重建。
+        # 这样做能确保 UI 状态与数据模型绝对同步，且大幅简化了处理节点移动、删除、跨线程连接时的判断逻辑。
+        
         # 获取所有按 ID 排序的节点
         nodes = [i for i in self.scene.items() if isinstance(i, NodeItem)]
         nodes.sort(key=lambda n: n.node_data.node_id)
@@ -631,24 +634,43 @@ class NodeGraphView(QGraphicsView):
                 self.scene.addItem(line)
                 self.scene.connection_lines.append(line)
         
-        # 为 data_out 绘制 data_in 连接 (虚线) 及合并节点
-        for node in nodes:
-            # data_in 连接
-            data_in_thread = node.node_data.data_in_thread
-            if data_in_thread and data_in_thread != "main" and data_in_thread in threads:
-                source_nodes = threads[data_in_thread]
-                target_id = node.node_data.node_id
-                # 在源线程中找 ID < target_id 的最后一个节点
-                valid_sources = [n for n in source_nodes if n.node_data.node_id < target_id]
-                if valid_sources:
-                    # 从最后一个有效的源节点连接
-                    source_node = max(valid_sources, key=lambda n: n.node_data.node_id)
-                    line = ConnectionLine(source_node, node, "data_in", 
-                                         self.get_thread_color(data_in_thread))
-                    self.scene.addItem(line)
-                    self.scene.connection_lines.append(line)
+        # 绘制 data_in 连接 (虚线)
+        # 规则：对于每个非 main 线程，找到该线程的第一个节点（最小 ID），
+        # 然后从其 data_in_thread 中找到 ID 最接近且小于该节点的源节点，绘制连线
+        # print(f"[DEBUG] threads: {list(threads.keys())}")
+        for tid, thread_nodes in threads.items():
+            if tid == "main":
+                continue  # main 线程不需要输入连线
             
-            # data_out - 在父线程上创建合并节点
+            # 找到该线程的第一个节点（最小 ID）
+            first_node = min(thread_nodes, key=lambda n: n.node_data.node_id)
+            target_id = first_node.node_data.node_id
+            
+            # 获取源线程 ID
+            data_in_thread = first_node.node_data.data_in_thread or "main"
+            # print(f"[DEBUG] Thread '{tid}': first_node_id={target_id}, data_in_thread='{data_in_thread}'")
+            
+            if data_in_thread not in threads:
+                # print(f"[DEBUG]   -> SKIP: source thread '{data_in_thread}' not in threads")
+                continue  # 源线程不存在，跳过
+            
+            source_nodes = threads[data_in_thread]
+            # 在源线程中找 ID < target_id 的最后一个节点
+            valid_sources = [n for n in source_nodes if n.node_data.node_id < target_id]
+            # print(f"[DEBUG]   -> valid_sources count: {len(valid_sources)}")
+            if valid_sources:
+                # 连线起点：源线程中 ID 最接近且小于目标节点的节点
+                source_node = max(valid_sources, key=lambda n: n.node_data.node_id)
+                # print(f"[DEBUG]   -> Drawing line: Node {source_node.node_data.node_id} -> Node {target_id}")
+                line = ConnectionLine(source_node, first_node, "data_in", 
+                                     self.get_thread_color(tid))
+                self.scene.addItem(line)
+                self.scene.connection_lines.append(line)
+            # else:
+            #     print(f"[DEBUG]   -> SKIP: no valid source nodes found")
+        
+        # 绘制 data_out 连接 (虚线) 及合并节点
+        for node in nodes:
             if node.node_data.data_out:
                 parent_tid = node.node_data.data_out_thread or "main"
                 child_tid = node.node_data.thread_id or "main"
@@ -955,7 +977,7 @@ class NodeGraphView(QGraphicsView):
                     # 创建 data_in 连接
                     source_thread = self.drag_start_item.node_data.thread_id
                     target.node_data.data_in_thread = source_thread
-                    target.node_data.data_in_slice = (-1, None)  # 默认: 最后一条消息
+                    target.node_data.data_in_slice = (0, 1)  # 默认: 第一条消息 [0:1]
                     print(f"Created connection: {source_thread} -> Node {target_id}")
                     self.update_connections()
                 else:
