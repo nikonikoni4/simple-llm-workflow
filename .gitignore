@@ -4,3 +4,7 @@ png
 docs_loc
 .vscode
 .claude
+.cursor
+api_设计
+old_version
+*.egg-info

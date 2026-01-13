@@ -21,16 +21,23 @@ except ImportError:
         BACKEND_PORT = 8001
 
 # 逻辑/后端导入
+# 逻辑/后端导入
 try:
-    from llm_linear_executor.schemas import ALL_NODE_TYPES, ExecutionPlan, NodeDefinition
+    from ..schemas import ALL_NODE_TYPES, ExecutionPlan, NodeDefinition, GuiExecutionPlan
     from llm_linear_executor.os_plan import load_plan_from_dict, save_plan_to_template
 except ImportError:
-    # 如果导入失败，则使用回退/模拟 (例如在结构之外运行)
-    ALL_NODE_TYPES = []
-    class ExecutionPlan: pass
-    class NodeDefinition: pass
-    def load_plan_from_dict(*args): return None
-    def save_plan_to_template(*args): return None
+    try:
+        from simple_llm_playground_v2.schemas import ALL_NODE_TYPES, ExecutionPlan, NodeDefinition, GuiExecutionPlan
+        from llm_linear_executor.os_plan import load_plan_from_dict, save_plan_to_template
+    except ImportError:
+        # 如果导入失败，则使用回退/模拟 (例如在结构之外运行)
+        ALL_NODE_TYPES = []
+        class ExecutionPlan: pass
+        class NodeDefinition: pass
+        class GuiExecutionPlan: pass
+        def load_plan_from_dict(*args): return None
+        def save_plan_to_template(*args): return None
+
 
 
 class ContextLoaderThread(QThread):
@@ -188,44 +195,59 @@ class MainWindow(QMainWindow):
         path, _ = QFileDialog.getOpenFileName(self, "Load Plan JSON", "", "JSON Files (*.json)")
         if path:
             try:
-                with open(path, "r", encoding="utf-8") as f:
-                    data = json.load(f)
+                # 1. 使用 os_plan 的 load_plan_from_template (这里我们没有 template pattern，直接加载文件内容)
+                # 但 os_plan.load_plan_from_template 实际上是加载 模版+变量. 
+                # 这里我们直接加载 dict, 模拟 os_plan.load_plan_from_dict 的行为 (如果存在) 或者直接用 load_plan_from_dict
                 
-                # 检查格式 (列表或带有 'nodes' 的字典)
-                nodes = []
-                if isinstance(data, list):
-                    nodes = data
-                elif isinstance(data, dict) and "nodes" in data:
-                    nodes = data["nodes"]
+                with open(path, "r", encoding="utf-8") as f:
+                    raw_data = json.load(f)
+                
+                # 兼容旧格式 list
+                if isinstance(raw_data, list):
+                    raw_data = {"task": "Imported Task", "nodes": raw_data}
+                
+                # 2. 转换为 GuiExecutionPlan (Pydantic 验证 + 坐标解析)
+                plan_model = GuiExecutionPlan(**raw_data)
+                
+                # 更新 task 输入
+                self.task_input.setText(plan_model.task)
+                
+                # 3. 转换为 dict 列表供 graph 使用 (model_dump)
+                nodes = [n.model_dump() for n in plan_model.nodes]
                 
                 self.graph_view.auto_layout_nodes(nodes)
                 self.current_file_path = path
                 print(f"Loaded {len(nodes)} nodes from {path}")
             except Exception as e:
                 print(f"Error loading plan: {e}")
+                import traceback
+                traceback.print_exc()
+
 
     def save_plan(self):
         path, _ = QFileDialog.getSaveFileName(self, "Save Plan JSON", "", "JSON Files (*.json)")
         if path:
             try:
                 nodes = self.graph_view.get_all_nodes_data()
+                task_name = self.task_input.text() or "untitled_task"
                 
-                # 在保存前清理 UI 特有的字段？
-                # 或者为布局持久化保留它们。
-                # 如果我们要干净地导出:
-                clean_nodes = []
-                for n in nodes:
-                    n_copy = n.copy()
-                    # 如果不需要，移除内部 UI 标志 (如 _ui_pos)
-                    # 但如果我们支持拖拽持久化，通常想要保留 _ui_pos。
-                    clean_nodes.append(n_copy)
+                # 使用 GuiExecutionPlan 构建和验证
+                plan = GuiExecutionPlan(
+                    task=task_name,
+                    nodes=nodes
+                )
                 
+                # 保存为 JSON
                 with open(path, "w", encoding="utf-8") as f:
-                    json.dump(clean_nodes, f, indent=2, ensure_ascii=False)
+                    # exclude_none=True 可以保持整洁，但要确保 backend 不依赖 null
+                    f.write(plan.model_dump_json(indent=2, ensure_ascii=False))
                 
                 print(f"Saved {len(nodes)} nodes to {path}")
             except Exception as e:
                 print(f"Error saving plan: {e}")
+                # 可以在这里弹窗提示错误
+                import traceback
+                traceback.print_exc()
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)

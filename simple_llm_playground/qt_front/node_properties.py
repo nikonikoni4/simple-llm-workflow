@@ -2,7 +2,10 @@ from PyQt5.QtWidgets import (QGroupBox, QVBoxLayout, QWidget, QHBoxLayout, QForm
                              QLineEdit, QComboBox, QTextEdit, QCheckBox, QLabel, QFrame, 
                              QSpinBox, QScrollArea, QTabWidget, QPushButton, QDoubleSpinBox)
 from PyQt5.QtCore import pyqtSignal
-from utils import NoScrollComboBox
+try:
+    from .utils import NoScrollComboBox
+except ImportError:
+    from utils import NoScrollComboBox
 import json
 
 # 配置导入
@@ -16,10 +19,11 @@ except ImportError:
 
 # Schema 导入
 try:
-    from llm_linear_executor.schemas import ALL_NODE_TYPES
+    from ..schemas import ALL_NODE_TYPES, NodeProperties
 except ImportError:
-    # 如果直接导入失败，则使用回退/模拟
+    # 如果直接导入失败，则使用回退/模拟 (仅开发调试用)
     ALL_NODE_TYPES = ["llm-first", "tool-first"]
+    NodeProperties = None
 
 
 class NodePropertyEditor(QGroupBox):
@@ -286,6 +290,27 @@ class NodePropertyEditor(QGroupBox):
         # 从后端加载可用工具
         self.load_available_tools()
 
+    def _get_node_val(self, key, default=None):
+        """兼容字典和 Pydantic 模型的获取方法"""
+        if self.current_node_data is None:
+            return default
+        if isinstance(self.current_node_data, dict):
+            return self.current_node_data.get(key, default)
+        else:
+            return getattr(self.current_node_data, key, default)
+
+    def _set_node_val(self, key, value):
+        """兼容字典和 Pydantic 模型的设置方法"""
+        if self.current_node_data is None:
+            return
+        if isinstance(self.current_node_data, dict):
+            self.current_node_data[key] = value
+        else:
+            # Pydantic 模型 setter
+            if hasattr(self.current_node_data, key):
+                setattr(self.current_node_data, key, value)
+            # else: 忽略模型中不存在的字段
+
     def _auto_save(self):
         """当任何字段更改时自动保存数据"""
         if not self._loading_data and self.current_node_data is not None:
@@ -429,31 +454,36 @@ class NodePropertyEditor(QGroupBox):
         self.current_node_data = node_data
         self.setEnabled(True)
         
+        # 兼容 node_id (new) 和 id (old)
+        nid = self._get_node_val("node_id")
+        if nid is None:
+            nid = self._get_node_val("id")
+            
         # 检查这是否是节点 ID 1 (受保护的主节点)
-        is_main_node = node_data.get("id") == 1
+        is_main_node = (nid == 1)
         
-        self.name_edit.setText(node_data.get("node_name", ""))
+        self.name_edit.setText(self._get_node_val("node_name", ""))
         # 为 ID=1 的节点锁定名称字段
         self.name_edit.setReadOnly(is_main_node)
         self.name_edit.setStyleSheet("background-color: #3e3e3e;" if is_main_node else "")
         
-        ntype = node_data.get("node_type", "llm-first")
+        ntype = self._get_node_val("node_type", "llm-first")
         # 处理旧版类型映射
         if ntype == "llm_auto": ntype = "llm-first"
         if ntype == "tool": ntype = "tool-first"
         self.type_combo.setCurrentText(ntype)
         
         # 加载分支名称 (thread_id)
-        self.branch_name_edit.setText(node_data.get("thread_id", "main"))
+        self.branch_name_edit.setText(self._get_node_val("thread_id", "main"))
         # 为 ID=1 的节点锁定分支字段 (必须保持为 'main')
         self.branch_name_edit.setReadOnly(is_main_node)
         self.branch_name_edit.setStyleSheet("background-color: #3e3e3e;" if is_main_node else "")
         
-        self.prompt_edit.setText(node_data.get("task_prompt", ""))
+        self.prompt_edit.setText(self._get_node_val("task_prompt", ""))
         
         # 加载工具 - 检查项
-        tools = node_data.get("tools")
-        tools_limit = node_data.get("tools_limit") or {}
+        tools = self._get_node_val("tools")
+        tools_limit = self._get_node_val("tools_limit") or {}
         
         for name, cb in self.tool_checkboxes.items():
             if tools and name in tools:
@@ -466,10 +496,10 @@ class NodePropertyEditor(QGroupBox):
                 limit_val = tools_limit.get(name, 0)
                 self.tool_limit_spinboxes[name].setValue(limit_val)
         
-        self.enable_tool_loop_cb.setChecked(node_data.get("enable_tool_loop", False))
+        self.enable_tool_loop_cb.setChecked(self._get_node_val("enable_tool_loop", False))
         
         # 工具优先 - 设置初始工具下拉菜单
-        initial_tool = node_data.get("initial_tool_name") or ""
+        initial_tool = self._get_node_val("initial_tool_name") or ""
         if initial_tool:
             index = self.initial_tool_combo.findText(initial_tool)
             if index >= 0:
@@ -479,7 +509,7 @@ class NodePropertyEditor(QGroupBox):
         else:
             self.initial_tool_combo.setCurrentIndex(0)
             
-        args = node_data.get("initial_tool_args")
+        args = self._get_node_val("initial_tool_args")
         if args:
             try:
                 self.initial_tool_args_edit.setText(json.dumps(args, indent=2, ensure_ascii=False))
@@ -489,9 +519,9 @@ class NodePropertyEditor(QGroupBox):
             self.initial_tool_args_edit.clear()
             
         # 数据输入 - 受限：只有线程中的第一个节点可以编辑
-        self.data_in_thread_edit.setText(node_data.get("data_in_thread") or "")
+        self.data_in_thread_edit.setText(self._get_node_val("data_in_thread") or "")
         
-        slice_val = node_data.get("data_in_slice")
+        slice_val = self._get_node_val("data_in_slice")
         if slice_val:
             # slice_val 是一个元组 (start, end)
             s, e = slice_val
@@ -512,51 +542,53 @@ class NodePropertyEditor(QGroupBox):
             self.data_in_slice_edit.setToolTip("")
             
         # 数据输出
-        self.data_out_cb.setChecked(node_data.get("data_out", False))
-        self.data_out_thread_edit.setText(node_data.get("data_out_thread") or "")
-        self.desc_edit.setText(node_data.get("data_out_description", ""))
+        self.data_out_cb.setChecked(self._get_node_val("data_out", False))
+        self.data_out_thread_edit.setText(self._get_node_val("data_out_thread") or "")
+        self.desc_edit.setText(self._get_node_val("data_out_description", ""))
         
         # LLM 设置
-        self.temp_spin.setValue(node_data.get("temperature", 0.7))
-        self.topp_spin.setValue(node_data.get("top_p", 0.9))
-        self.enable_search_cb.setChecked(node_data.get("enable_search", False))
-        self.enable_thinking_cb.setChecked(node_data.get("enable_thinking", False))
+        self.temp_spin.setValue(self._get_node_val("temperature", 0.7))
+        self.topp_spin.setValue(self._get_node_val("top_p", 0.9))
+        self.enable_search_cb.setChecked(self._get_node_val("enable_search", False))
+        self.enable_thinking_cb.setChecked(self._get_node_val("enable_thinking", False))
             
         self.update_field_visibility(ntype)
         
         # 加载完成后重新启用自动保存
         self._loading_data = False
 
+
     def _save_to_node_data(self):
         """内部方法，用于将所有字段保存到节点数据 (被自动保存使用)"""
         if self.current_node_data is None:
             return
             
-        # 检查这是否是节点 ID 1 (受保护的主节点)
-        is_main_node = self.current_node_data.get("id") == 1
+        # 兼容 node_id / id
+        nid = self._get_node_val("node_id")
+        if nid is None: nid = self._get_node_val("id")
+        
+        is_main_node = (nid == 1)
         
         # 对于 ID=1 的节点，保留原始名称
         if not is_main_node:
-            self.current_node_data["node_name"] = self.name_edit.text()
+            self._set_node_val("node_name", self.name_edit.text())
         
-        self.current_node_data["node_type"] = self.type_combo.currentText()
+        self._set_node_val("node_type", self.type_combo.currentText())
         
         # 对于 ID=1 的节点，强制 thread_id 为 'main'
         if is_main_node:
-            self.current_node_data["thread_id"] = "main"
+            self._set_node_val("thread_id", "main")
         else:
-            self.current_node_data["thread_id"] = self.branch_name_edit.text().strip() or "main"
+            self._set_node_val("thread_id", self.branch_name_edit.text().strip() or "main")
         
-        self.current_node_data["task_prompt"] = self.prompt_edit.toPlainText()
+        self._set_node_val("task_prompt", self.prompt_edit.toPlainText())
         
         # 保存工具
-        checked_tools = []
-        # 从复选框中保存工具
         checked_tools = []
         for name, cb in self.tool_checkboxes.items():
             if cb.isChecked():
                 checked_tools.append(name)
-        self.current_node_data["tools"] = checked_tools if checked_tools else None
+        self._set_node_val("tools", checked_tools if checked_tools else None)
         
         # 保存工具限制
         tools_limit = {}
@@ -565,34 +597,31 @@ class NodePropertyEditor(QGroupBox):
                  if spin.value() > 0:
                      tools_limit[name] = spin.value()
         
-        self.current_node_data["tools_limit"] = tools_limit if tools_limit else None
+        self._set_node_val("tools_limit", tools_limit if tools_limit else None)
         
-        self.current_node_data["enable_tool_loop"] = self.enable_tool_loop_cb.isChecked()
+        self._set_node_val("enable_tool_loop", self.enable_tool_loop_cb.isChecked())
         
         # 保存工具优先数据
         is_tool_first = (self.type_combo.currentText() == "tool-first")
         if is_tool_first:
             init_tool = self.initial_tool_combo.currentText()
-            if init_tool != "Select initial tool...":
-                self.current_node_data["initial_tool_name"] = init_tool
-            else:
-                self.current_node_data["initial_tool_name"] = None
+            val = init_tool if init_tool != "Select initial tool..." else None
+            self._set_node_val("initial_tool_name", val)
             
             args_str = self.initial_tool_args_edit.toPlainText().strip()
             if args_str:
                 try:
-                    self.current_node_data["initial_tool_args"] = json.loads(args_str)
+                    self._set_node_val("initial_tool_args", json.loads(args_str))
                 except json.JSONDecodeError:
-                    # 如果在输入期间 JSON 无效，则保留之前的值
-                    pass
+                    pass # 保留旧值
             else:
-                self.current_node_data["initial_tool_args"] = None
+                self._set_node_val("initial_tool_args", None)
         else:
-            self.current_node_data["initial_tool_name"] = None
-            self.current_node_data["initial_tool_args"] = None
+            self._set_node_val("initial_tool_name", None)
+            self._set_node_val("initial_tool_args", None)
 
         # 数据输入
-        self.current_node_data["data_in_thread"] = self.data_in_thread_edit.text() or None
+        self._set_node_val("data_in_thread", self.data_in_thread_edit.text() or None)
         
         slice_str = self.data_in_slice_edit.text().strip()
         if slice_str:
@@ -604,36 +633,35 @@ class NodePropertyEditor(QGroupBox):
                     
                     s = int(s_txt) if s_txt else None
                     e = int(e_txt) if e_txt else None
-                    self.current_node_data["data_in_slice"] = (s, e)
+                    self._set_node_val("data_in_slice", (s, e))
                 else:
-                    self.current_node_data["data_in_slice"] = None
+                    self._set_node_val("data_in_slice", None)
             except ValueError:
-                # 如果在输入期间解析失败，则保留之前的值
                 pass
         else:
-            self.current_node_data["data_in_slice"] = None
+            self._set_node_val("data_in_slice", None)
 
         # 数据输出
-        self.current_node_data["data_out"] = self.data_out_cb.isChecked()
-        self.current_node_data["data_out_thread"] = self.data_out_thread_edit.text() or None
-        self.current_node_data["data_out_description"] = self.desc_edit.text()
+        self._set_node_val("data_out", self.data_out_cb.isChecked())
+        self._set_node_val("data_out_thread", self.data_out_thread_edit.text() or None)
+        self._set_node_val("data_out_description", self.desc_edit.text())
         
         # LLM 设置
-        self.current_node_data["temperature"] = self.temp_spin.value()
-        self.current_node_data["top_p"] = self.topp_spin.value()
-        self.current_node_data["enable_search"] = self.enable_search_cb.isChecked()
-        self.current_node_data["enable_thinking"] = self.enable_thinking_cb.isChecked()
+        self._set_node_val("temperature", self.temp_spin.value())
+        self._set_node_val("top_p", self.topp_spin.value())
+        self._set_node_val("enable_search", self.enable_search_cb.isChecked())
+        self._set_node_val("enable_thinking", self.enable_thinking_cb.isChecked())
     
     def save_node_data(self):
         """手动保存 - 更新数据并触发连接更新"""
         if self.current_node_data is not None:
             # 检查分支 (thread_id) 是否已更改
-            old_thread_id = self.current_node_data.get("thread_id", "main")
+            old_thread_id = self._get_node_val("thread_id", "main")
             
             # 首先保存所有数据
             self._save_to_node_data()
             
-            new_thread_id = self.current_node_data.get("thread_id", "main")
+            new_thread_id = self._get_node_val("thread_id", "main")
             branch_changed = (old_thread_id != new_thread_id)
             
             print(f"Saved Node: {self.current_node_data}")
@@ -641,4 +669,4 @@ class NodePropertyEditor(QGroupBox):
             
             # 如果分支改变，发出信号以更新节点颜色
             if branch_changed:
-                self.branchChanged.emit(self.current_node_data)
+                self.branchChanged.emit(self.current_node_data if isinstance(self.current_node_data, dict) else self.current_node_data.model_dump())

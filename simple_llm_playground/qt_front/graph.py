@@ -669,6 +669,9 @@ class NodeGraphView(QGraphicsView):
         for item in items:
             # 在数据中更新位置，以防稍后需要持久化 (自定义字段)
             item.node_data["_ui_pos"] = [item.x(), item.y()]
+            # 同时更新 schema 兼容的坐标
+            item.node_data["x"] = int(item.x())
+            item.node_data["y"] = int(item.y())
             nodes.append(item.node_data)
         return nodes
 

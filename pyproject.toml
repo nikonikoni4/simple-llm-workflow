@@ -1,0 +1,53 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "simple-llm-playground"
+version = "2.0.0"
+description = "A Qt-based visual workflow editor and debugger for LLM task execution, built on llm-linear-executor"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [
+    { name = "nikonikoni4", email = "nico.dev.ai@qq.com" }
+]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Operating System :: OS Independent",
+    "License :: OSI Approved :: MIT License",
+]
+
+dependencies = [
+    "fastapi>=0.109.0",
+    "uvicorn>=0.27.0",
+    "pydantic>=2.6.0",
+    "langchain-core>=0.1.20",
+    "langchain-openai>=0.0.5",
+    "aiohttp>=3.9.0",
+    "PyQt5>=5.15.10",
+    "openai>=1.10.0",
+    # 本地安装 llm-linear-executor（从子目录）
+    "llm-linear-executor @ file:llm_linear_executor",
+]
+
+[project.urls]
+Homepage = "https://github.com/nikonikoni4/simple-llm-playground"
+Repository = "https://github.com/nikonikoni4/simple-llm-playground.git"
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+    "black>=23.0.0",
+    "mypy>=1.0.0",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["simple_llm_playground"]
+exclude = ["llm_linear_executor*", "asset*", "docs_loc*"]
+
+[tool.setuptools.package-data]
+simple_llm_playground = ["*.json", "*.md"]
