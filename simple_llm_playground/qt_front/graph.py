@@ -4,17 +4,18 @@ from PyQt5.QtGui import QPen, QBrush, QColor, QWheelEvent, QPainter, QPainterPat
 import random
 import json
 from simple_llm_playground.qt_front.utils import NODE_COLORS, THREAD_COLORS
-
+from simple_llm_playground.schemas import NodeProperties
+from typing import Union
 class NodeItem(QGraphicsItem):
     """
     自定义节点项，具有圆角、页眉和阴影。
     """
-    def __init__(self, node_data, x=0, y=0, w=180, h=80, thread_color=None):
+    def __init__(self, node_data: NodeProperties, x=0, y=0, w=180, h=80, thread_color=None):
         super().__init__()
         self.setPos(x, y)
         self.width = w
         self.height = h
-        self.node_data = node_data
+        self.node_data: NodeProperties = node_data
         self.thread_color = thread_color  # 用于区分线程的颜色
         
         # 用于拖拽连接的输出锚点 (右侧)
@@ -55,13 +56,11 @@ class NodeItem(QGraphicsItem):
         self._update_colors()
 
     def _update_colors(self):
-        # 页眉颜色优先级: 线程颜色 > 自定义颜色 > 节点类型颜色
+        # 页眉颜色优先级: 线程颜色 > 节点类型颜色
         if self.thread_color:
             self.header_color = self.thread_color
-        elif "color" in self.node_data:
-            self.header_color = QColor(self.node_data["color"])
         else:
-            ntype = self.node_data.get("node_type", "default")
+            ntype = self.node_data.node_type or "default"
             self.header_color = NODE_COLORS.get(ntype, NODE_COLORS["default"])
             
         self.body_color = QColor("#2d2d2d")
@@ -76,7 +75,7 @@ class NodeItem(QGraphicsItem):
         top = -2
         bottom = self.height + 2
         
-        thread_view_index = self.node_data.get("thread_view_index", 0)
+        thread_view_index = self.node_data.thread_view_index
         if thread_view_index > 0:
             # 包含向上按钮区域: 20 按钮 + 4 间距
             top = -28
@@ -134,13 +133,13 @@ class NodeItem(QGraphicsItem):
         # 位置根据斜体进行微调
         painter.drawText(QRectF(10, 0, self.width - 20, 30), 
                          Qt.AlignLeft | Qt.AlignVCenter, 
-                         self.node_data.get("node_name", "Node"))
+                         self.node_data.node_name or "Node")
         
         # 类型标签 (主体)
         painter.setPen(self.subtext_color)
         font_small = QFont("Segoe UI", 8)
         painter.setFont(font_small)
-        type_text = f"Type: {self.node_data.get('node_type', 'unknown')}"
+        type_text = f"Type: {self.node_data.node_type or 'unknown'}"
         
         # 在页眉最低处下方开始绘制类型文本
         text_y_start = max(h_left, h_right) + 8
@@ -148,8 +147,8 @@ class NodeItem(QGraphicsItem):
                          Qt.AlignLeft, type_text)
         
         # 绘制 ID 及交换按钮
-        node_id = self.node_data.get('id', '?')
-        thread_id = self.node_data.get('thread_id', 'main')
+        node_id = self.node_data.node_id
+        thread_id = self.node_data.thread_id or 'main'
         
         # 计算按钮位置
         button_size = 14
@@ -225,7 +224,7 @@ class NodeItem(QGraphicsItem):
         # 向下按钮: 位于节点下方下方
         
         # 向上按钮 (仅在 thread_view_index > 0 时显示，表示不是最顶层的线程)
-        thread_view_index = self.node_data.get("thread_view_index", 0)
+        thread_view_index = self.node_data.thread_view_index
         if thread_view_index > 0:
             # 将向上按钮放置在节点上方 (在节点边界之外)
             up_button_y = -thread_button_size - 4  # 节点上方 4px 间隙
@@ -591,22 +590,22 @@ class NodeGraphView(QGraphicsView):
         
         # 获取所有按 ID 排序的节点
         nodes = [i for i in self.scene.items() if isinstance(i, NodeItem)]
-        nodes.sort(key=lambda n: n.node_data.get("id", 0))
+        nodes.sort(key=lambda n: n.node_data.node_id)
         
         # 建立 ID 到节点的查找表
-        node_by_id = {n.node_data.get("id"): n for n in nodes}
+        node_by_id = {n.node_data.node_id: n for n in nodes}
         
         # 将节点按 thread_id 分组
         threads = {}
         for node in nodes:
-            tid = node.node_data.get("thread_id", "main")
+            tid = node.node_data.thread_id or "main"
             if tid not in threads:
                 threads[tid] = []
             threads[tid].append(node)
         
         # 绘制同线程连接 (实线)
         for tid, thread_nodes in threads.items():
-            thread_nodes.sort(key=lambda n: n.node_data.get("id", 0))
+            thread_nodes.sort(key=lambda n: n.node_data.node_id)
             color = self.get_thread_color(tid)
             
             for i in range(len(thread_nodes) - 1):
@@ -619,24 +618,24 @@ class NodeGraphView(QGraphicsView):
         # 为 data_out 绘制 data_in 连接 (虚线) 及合并节点
         for node in nodes:
             # data_in 连接
-            data_in_thread = node.node_data.get("data_in_thread")
-            if data_in_thread and data_in_thread in threads:
+            data_in_thread = node.node_data.data_in_thread
+            if data_in_thread and data_in_thread != "main" and data_in_thread in threads:
                 source_nodes = threads[data_in_thread]
-                target_id = node.node_data.get("id", 0)
+                target_id = node.node_data.node_id
                 # 在源线程中找 ID < target_id 的最后一个节点
-                valid_sources = [n for n in source_nodes if n.node_data.get("id", 0) < target_id]
+                valid_sources = [n for n in source_nodes if n.node_data.node_id < target_id]
                 if valid_sources:
                     # 从最后一个有效的源节点连接
-                    source_node = max(valid_sources, key=lambda n: n.node_data.get("id", 0))
+                    source_node = max(valid_sources, key=lambda n: n.node_data.node_id)
                     line = ConnectionLine(source_node, node, "data_in", 
                                          self.get_thread_color(data_in_thread))
                     self.scene.addItem(line)
                     self.scene.connection_lines.append(line)
             
             # data_out - 在父线程上创建合并节点
-            if node.node_data.get("data_out"):
-                parent_tid = node.node_data.get("parent_thread_id", "main")
-                child_tid = node.node_data.get("thread_id", "main")
+            if node.node_data.data_out:
+                parent_tid = node.node_data.data_out_thread or "main"
+                child_tid = node.node_data.thread_id or "main"
                 
                 if parent_tid and parent_tid != child_tid and parent_tid in threads:
                     # 将合并节点放置在合适的 X 位置 (该节点之后)
@@ -660,18 +659,16 @@ class NodeGraphView(QGraphicsView):
                     self.scene.addItem(line)
                     self.scene.connection_lines.append(line)
 
-    def get_all_nodes_data(self):
+    def get_all_nodes_data(self) -> list[NodeProperties]:
         nodes = []
         # 如果需要，按 x 位置排序以维持某种逻辑顺序
         items = [i for i in self.scene.items() if isinstance(i, NodeItem)]
         items.sort(key=lambda item: item.x())
         
         for item in items:
-            # 在数据中更新位置，以防稍后需要持久化 (自定义字段)
-            item.node_data["_ui_pos"] = [item.x(), item.y()]
-            # 同时更新 schema 兼容的坐标
-            item.node_data["x"] = int(item.x())
-            item.node_data["y"] = int(item.y())
+            # 更新 schema 兼容的坐标
+            item.node_data.x = int(item.x())
+            item.node_data.y = int(item.y())
             nodes.append(item.node_data)
         return nodes
 
