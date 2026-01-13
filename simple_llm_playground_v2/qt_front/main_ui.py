@@ -2,7 +2,7 @@ import sys
 import json
 import requests
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QVBoxLayout, QWidget, QHBoxLayout, 
-                             QAction, QFileDialog, QSplitter)
+                             QAction, QFileDialog, QSplitter, QLabel, QLineEdit)
 from PyQt5.QtCore import Qt, QThread, pyqtSignal
 
 # 本地导入
@@ -82,9 +82,27 @@ class MainWindow(QMainWindow):
         main_h_splitter = QSplitter(Qt.Horizontal)
         main_layout.addWidget(main_h_splitter)
         
-        # --- 左侧面板: 上下文及执行信息 ---
+        # --- 左侧面板: Task 输入及上下文信息 ---
+        # --- 左侧面板: Task 输入及上下文信息 ---
+        left_panel_widget = QWidget()
+        left_panel_layout = QVBoxLayout(left_panel_widget)
+        left_panel_layout.setContentsMargins(5, 5, 5, 5)
+        left_panel_layout.setSpacing(5)
+        
+        # Task 输入部分
+        task_layout = QHBoxLayout()
+        task_label = QLabel("Task:")
+        self.task_input = QLineEdit()
+        task_layout.addWidget(task_label)
+        task_layout.addWidget(self.task_input)
+        
+        left_panel_layout.addLayout(task_layout)
+        
+        # 上下文/执行面板
         self.context_panel = NodeContextPanel()
-        main_h_splitter.addWidget(self.context_panel)
+        left_panel_layout.addWidget(self.context_panel)
+        
+        main_h_splitter.addWidget(left_panel_widget)
         
         # --- 右侧: 用于图表和属性的垂直分割器 ---
         right_v_splitter = QSplitter(Qt.Vertical)
