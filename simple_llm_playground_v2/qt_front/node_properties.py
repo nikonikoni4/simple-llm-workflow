@@ -246,7 +246,7 @@ class NodePropertyEditor(QGroupBox):
         self.tab_widget.addTab(self.llm_setting_tab, "LLM Setting")
         
         # Save Button (kept for manual trigger if needed)
-        self.save_btn = QPushButton("Save & Update Connections")
+        self.save_btn = QPushButton("Save _Update Connections")
         self.save_btn.clicked.connect(self.save_node_data)
         self.main_layout.addWidget(self.save_btn)
         

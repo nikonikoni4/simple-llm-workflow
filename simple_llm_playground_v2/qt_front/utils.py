@@ -52,19 +52,68 @@ QSplitter::handle {
     background-color: #2d2d2d;
     width: 2px;
 }
+QTabWidget::pane {
+    border: 1px solid #3e3e3e;
+    background: #1e1e1e;
+    margin-top: -1px; 
+}
+QTabWidget::tab-bar {
+    left: 5px; 
+}
+QTabBar::tab {
+    background: #2d2d2d;
+    color: #a0a0a0;
+    border: 1px solid #3e3e3e;
+    border-bottom-color: #3e3e3e; 
+    border-top-left-radius: 4px;
+    border-top-right-radius: 4px;
+    min-width: 80px;
+    padding: 6px 12px;
+}
+QTabBar::tab:selected {
+    background: #1e1e1e;
+    color: #ffffff;
+    border-bottom-color: #1e1e1e; 
+}
+QTabBar::tab:!selected {
+    margin-top: 2px; 
+}
+QTabBar::tab:hover {
+    background: #3e3e3e;
+}
 QScrollBar:vertical {
     border: none;
     background: #1e1e1e;
-    width: 10px;
+    width: 6px;
     margin: 0px;
 }
 QScrollBar::handle:vertical {
     background: #424242;
     min-height: 20px;
-    border-radius: 5px;
+    border-radius: 3px;
 }
 QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
     height: 0px;
+}
+QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {
+    background: none;
+}
+QScrollBar:horizontal {
+    border: none;
+    background: #1e1e1e;
+    height: 6px;
+    margin: 0px;
+}
+QScrollBar::handle:horizontal {
+    background: #424242;
+    min-width: 20px;
+    border-radius: 3px;
+}
+QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {
+    width: 0px;
+}
+QScrollBar::add-page:horizontal, QScrollBar::sub-page:horizontal {
+    background: none;
 }
 QGraphicsView {
     border: 1px solid #3e3e3e;

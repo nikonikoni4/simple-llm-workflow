@@ -36,7 +36,7 @@ except ImportError:
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("LLM Linear Executor Debugger")
+        self.setWindowTitle("Simple LLM Playground")
         self.resize(1600, 1000)
         
         # Central Widget
@@ -49,32 +49,39 @@ class MainWindow(QMainWindow):
         # Toolbar
         toolbar = self.addToolBar("Main")
         
-        load_action = QAction("Load Plan", self)
+        load_action = QAction("Load JSON Plan", self)
         load_action.triggered.connect(self.load_plan)
         toolbar.addAction(load_action)
         
-        save_action = QAction("Save Plan", self)
+        save_action = QAction("Save JSON Plan", self)
         save_action.triggered.connect(self.save_plan)
         toolbar.addAction(save_action)
         
         # Main Splitter (Horizontal logic)
-        splitter = QSplitter(Qt.Horizontal)
-        main_layout.addWidget(splitter)
+        main_h_splitter = QSplitter(Qt.Horizontal)
+        main_layout.addWidget(main_h_splitter)
         
-        # --- Left Panel: Graph View ---
-        self.graph_view = NodeGraphView()
-        splitter.addWidget(self.graph_view)
-        
-        # --- Middle Panel: Properties ---
-        self.prop_editor = NodePropertyEditor()
-        splitter.addWidget(self.prop_editor)
-        
-        # --- Right Panel: Context & Exec Info ---
+        # --- Left Panel: Context & Exec Info ---
         self.context_panel = NodeContextPanel()
-        splitter.addWidget(self.context_panel)
+        main_h_splitter.addWidget(self.context_panel)
         
-        # Set splitter sizes (Graph larger, others smaller)
-        splitter.setSizes([800, 400, 400])
+        # --- Right Side: Vertical Splitter for Graph and Properties ---
+        right_v_splitter = QSplitter(Qt.Vertical)
+        main_h_splitter.addWidget(right_v_splitter)
+        
+        # --- Top Right: Graph View ---
+        self.graph_view = NodeGraphView()
+        right_v_splitter.addWidget(self.graph_view)
+        
+        # --- Bottom Right: Properties ---
+        self.prop_editor = NodePropertyEditor()
+        right_v_splitter.addWidget(self.prop_editor)
+        
+        # Set splitter sizes
+        # Left panel ~30% width, Right side ~70%
+        main_h_splitter.setSizes([450, 1150])
+        # Top (Graph) ~60% height, Bottom (Properties) ~40%
+        right_v_splitter.setSizes([600, 400])
         
         # Connect Signals
         self.graph_view.nodeSelected.connect(self.on_node_selected)
