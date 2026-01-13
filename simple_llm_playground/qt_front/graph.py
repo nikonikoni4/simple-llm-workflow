@@ -4,7 +4,13 @@ from PyQt5.QtGui import QPen, QBrush, QColor, QWheelEvent, QPainter, QPainterPat
 import random
 import json
 from simple_llm_playground.qt_front.utils import NODE_COLORS, THREAD_COLORS
-from simple_llm_playground.schemas import NodeProperties, GuiExecutionPlan
+from simple_llm_playground.schemas import (
+    NodeProperties, 
+    GuiExecutionPlan,
+    NODE_GAP_X,
+    THREAD_GAP_Y,
+    MAIN_Y_BASELINE,
+)
 from typing import Union, Dict, Optional, List
 class NodeItem(QGraphicsItem):
     """
@@ -493,13 +499,18 @@ class NodeGraphView(QGraphicsView):
 
     def __init__(self):
         super().__init__()
+        # 位置控制
+        self.node_gap_x = NODE_GAP_X # 节点间隔
+        self.thread_gap_y = THREAD_GAP_Y  # 线程间隔
+        self.main_y_baseline = MAIN_Y_BASELINE # 主线程基准线
+        
         self.scene = NodeGraphScene()
         self.setScene(self.scene)
         self.setDragMode(QGraphicsView.ScrollHandDrag)
         self.setRenderHint(QPainter.RenderHint.Antialiasing)
         
         self.next_node_id = 1
-        self.node_gap_x = 220
+        
         
         # 线程颜色管理
         self.thread_color_map = {}  # thread_id -> QColor
@@ -517,8 +528,9 @@ class NodeGraphView(QGraphicsView):
         self.current_pattern: str = ""  # 当前显示的 pattern 名称
         self.current_file_path: Optional[str] = None  # 当前加载的文件路径
         
-        # 主线程基准线
-        self.main_y_baseline = 200
+        
+        
+
         
         # 不再硬编码初始节点，由 load_from_file 或手动添加
         # 将视图中心对准左下角区域
@@ -546,7 +558,7 @@ class NodeGraphView(QGraphicsView):
             }
         """)
         self.add_btn.setCursor(Qt.PointingHandCursor)
-        self.add_btn.clicked.connect(self.add_node_at_center)
+        self.add_btn.clicked.connect(self.add_main_node)
         
         # 为按钮添加阴影
         shadow = QGraphicsDropShadowEffect(self)
@@ -712,91 +724,6 @@ class NodeGraphView(QGraphicsView):
 
     def clear_nodes(self):
         self.scene.clear()
-
-    def auto_layout_nodes(self, nodes_data):
-        self.clear_nodes()
-        self.next_node_id = 1
-        
-        # 用于父/子一致性的 ID 重映射
-        old_id_map = {}
-        
-        # 如果存在，映射现有的线程索引
-        for node in nodes_data:
-            tid = node.get("thread_id", "main")
-            tidx = node.get("thread_view_index")
-            if tidx is not None and tid not in self.thread_view_indices:
-                self.thread_view_indices[tid] = tidx
-
-        # 第一遍: 分配新 ID 并映射
-        for node in nodes_data:
-            # 确保 thread_view_index
-            tid = node.get("thread_id", "main")
-            if tid not in self.thread_view_indices:
-                # 分配新索引: max + 1
-                current_indices = self.thread_view_indices.values()
-                next_idx = max(current_indices) + 1 if current_indices else 0
-                self.thread_view_indices[tid] = next_idx
-            
-            node["thread_view_index"] = self.thread_view_indices[tid]
-
-            old_id = node.get("id")
-            new_id = self.next_node_id
-            
-            node["id"] = new_id
-            if old_id is not None:
-                old_id_map[old_id] = new_id
-            
-            # 如果缺失，为现有规划节点自动分配颜色
-            if node.get("node_type") == "planning" and "color" not in node:
-                # 根据 ID 分配确定但唯一的颜色以保持稳定？
-                # 或者仅仅随机？用户说 "不同"。随机也可以，但如果不保存，重新加载时会变。
-                # 让我们使用随机，下次保存时会被保存下来。
-                node["color"] = QColor.fromHsv(random.randint(0, 359), 200, 200).name()
-
-            self.next_node_id += 1
-            
-        # 第二遍: 如果存在父指针，则进行更新 (假设键名为 'parent_id')，并添加到场景中
-        
-        # 重置添加到场景的计数器 (如果我们不提供 force_id，add_node 会递增它，
-        # 但这里我们希望信任预计算的 ID，或者如果是传递处理后的数据，就让 add_node 处理)
-        # 实际上更简单: 直接顺序调用 add_node。
-        
-        # 等等，后文的 add_node 逻辑会根据 ID 处理 X。
-        # 因此我们只需要尊重保存好的布局中的 Y (如果可用)。
-        # 但我们必须将数据中的 ID 重写为基于列表顺序的 1..N 序列。
-        
-        # 再次重置 ID，使 add_node 从 1 开始，以匹配循环
-        self.next_node_id = 1
-        
-        for node in nodes_data:
-            # 如果需要，修复 parent_id
-            pid = node.get("parent_id")
-            if pid in old_id_map:
-                node["parent_id"] = old_id_map[pid]
-            
-            # 根据 thread_view_index 确定 Y (按要求从上到下)
-            # "一个纵坐标只能有一个线程"
-            # 用户反馈: "id越大应该是往上的"
-            # 在 Qt 中，上方向是相对于基准线的负 Y。
-            # 所以我们要减去偏移量。
-            
-            tidx = node.get("thread_view_index", 0)
-            thread_gap_y = 120 # 线程间的垂直间距
-            
-            y = self.main_y_baseline - (tidx * thread_gap_y)
-            
-            # 如果存在 _ui_pos，仅覆盖 X (水平拖动了？)
-            # 或完全忽略 Y 以强制严格布局。
-            if "_ui_pos" in node:
-                # node["_ui_pos"][1] = y # 强制 Y 与线程匹配
-                pass 
-            
-            
-            # X 在 add_node 中由 ID 决定
-            self.add_node(node, 0, y)
-        
-        # 放置所有节点后绘制连接线
-        self.update_connections()
     
     def update_node_color(self, node_data):
         """当节点的 thread_id 改变时更新特定节点的颜色"""
@@ -829,58 +756,21 @@ class NodeGraphView(QGraphicsView):
                 node.set_execution_status(status)
                 break
 
-    def add_node(self, node_data: NodeProperties, x, y, force_id=None):
-        # 强制 ID
-        if force_id is not None:
-            node_id = force_id
-            # 确保 next_node_id 领先于强制分配的 ID，以防混合使用时发生冲突
-            if node_id >= self.next_node_id:
-                self.next_node_id = node_id + 1
-        else:
-            # 检查数据是否已有 ID (例如从文件加载但未通过 arg 强制)
-            # 但要求说 "如果读取，则按照读取顺序"。
-            # 所以我们通常只是根据当前计数器覆盖/分配。
-            node_id = self.next_node_id
-            self.next_node_id += 1
+    def add_node(self, node_data: NodeProperties):
+        # 依据 node_id 和 thread_view_index 计算坐标
+        node_id = node_data.node_id
+        tidx = node_data.thread_view_index
         
-        node_data.node_id = node_id
-        
-        # 确保 thread_id 存在
-        if "thread_id" not in node_data:
-            node_data.thread_id = "main"
-            
-        # 确保 thread_view_index 存在
-        tid = node_data.thread_id
+        if tidx is None:
+            # Fallback (should not happen with new principles)
+             tidx = 0
+             node_data.thread_view_index = 0
 
-        if "thread_view_index" not in node_data:
-            if tid in self.thread_view_indices:
-                node_data.thread_view_index = self.thread_view_indices[tid]
-            else:
-                # 新线程动态分配
-                # 警告: 除非确实是一个新线程，否则添加简单节点通常不应创建新的线程索引。
-                # 如果是以前没见过的 thread_id，则分配下一个索引。
-                current_indices = self.thread_view_indices.values()
-                next_idx = max(current_indices) + 1 if current_indices else 0
-                self.thread_view_indices[tid] = next_idx
-                node_data.thread_view_index = next_idx
-
-        else:
-             # 如果管理器中不存在，则同步回去
-             if tid not in self.thread_view_indices:
-                 self.thread_view_indices[tid] = node_data.thread_view_index
-
-
-        # 基于 ID 强制 X 坐标
-        # ID 1 -> 0
-        # ID 2 -> GAP
-        # ...
+        # ID 1 -> 0, ID 2 -> GAP ...
         calculated_x = (node_id - 1) * self.node_gap_x
         
-        # 基于 thread_view_index 强制 Y 坐标
-        thread_gap_y = 120
-        tidx = node_data.thread_view_index
         # 索引大 = 更靠上 = Y 值更小
-        calculated_y = self.main_y_baseline - (tidx * thread_gap_y)
+        calculated_y = self.main_y_baseline - (tidx * self.thread_gap_y)
         
         # 直接修改 node_data 的坐标
         node_data.x = calculated_x
@@ -892,6 +782,10 @@ class NodeGraphView(QGraphicsView):
         # 创建节点项，坐标从 node_data 中读取
         item = NodeItem(node_data, thread_color=thread_color)
         self.scene.addItem(item)
+        
+        # 维护 next_node_id
+        if node_id >= self.next_node_id:
+            self.next_node_id = node_id + 1
     
     def wheelEvent(self, event: QWheelEvent):
         # 缩放
@@ -1016,22 +910,23 @@ class NodeGraphView(QGraphicsView):
 
     def add_new_node_from(self, parent_item):
         # 扩展: 同一 Y 层级，同一线程
-        new_y = parent_item.y()
         parent_thread = parent_item.node_data.thread_id
-        
-        new_data = {
+        tidx = parent_item.node_data.thread_view_index
+        node_id = self.next_node_id
+
+        new_data = NodeProperties(**{
             "node_name": "New Node", 
             "node_type": "llm-first", 
             "thread_id": parent_thread,
             "task_prompt": "",
-            "parent_id": parent_item.node_data.node_id
-        }
-        self.add_node(new_data, 0, new_y)
+            "parent_id": parent_item.node_data.node_id,
+            "node_id": node_id,
+            "thread_view_index": tidx
+        })
+        self.add_node(new_data)
         self.update_connections()
 
     def add_branch_from(self, parent_item):
-        # 分支: 向上放置 (在 Qt 中为负 Y)
-        new_y = parent_item.y() - 120
         parent_thread = parent_item.node_data.thread_id
         
         # 为分支创建新的线程 ID
@@ -1044,18 +939,20 @@ class NodeGraphView(QGraphicsView):
         # 注册新线程
         self.thread_view_indices[new_thread_id] = next_idx
         
-        new_data = {
+        node_id = self.next_node_id
+
+        new_data = NodeProperties(**{
             "node_name": "Branch", 
             "node_type": "llm-first",
             "thread_id": new_thread_id,
             "parent_thread_id": parent_thread,
             "task_prompt": "",
             "parent_id": parent_item.node_data.node_id,
-            "thread_view_index": next_idx
-        }
+            "thread_view_index": next_idx,
+            "node_id": node_id
+        })
 
-        # Y 将在 add_node 中计算
-        self.add_node(new_data, 0, 0)
+        self.add_node(new_data)
         self.update_connections()
 
     def delete_node(self, item):
@@ -1223,14 +1120,13 @@ class NodeGraphView(QGraphicsView):
         nodes = [i for i in self.scene.items() if isinstance(i, NodeItem)]
         
         # 更新两个线程中的所有节点
-        thread_gap_y = 120
         for node in nodes:
             node_thread_id = node.node_data.thread_id
             if node_thread_id == current_thread_id:
                 # 为当前线程中的所有节点更新 thread_view_index
                 node.node_data.thread_view_index = target_thread_index
                 # 重新计算 Y 位置轮廓
-                new_y = self.main_y_baseline - (target_thread_index * thread_gap_y)
+                new_y = self.main_y_baseline - (target_thread_index * self.thread_gap_y)
                 node.setPos(node.x(), new_y)
 
                 node.update()
@@ -1238,7 +1134,7 @@ class NodeGraphView(QGraphicsView):
                 # 为目标线程中的所有节点更新 thread_view_index轮廓
                 node.node_data.thread_view_index = current_thread_index
                 # 重新计算 Y 位置轮廓
-                new_y = self.main_y_baseline - (current_thread_index * thread_gap_y)
+                new_y = self.main_y_baseline - (current_thread_index * self.thread_gap_y)
                 node.setPos(node.x(), new_y)
 
                 node.update()
@@ -1248,15 +1144,21 @@ class NodeGraphView(QGraphicsView):
         
         print(f"Swapped threads: {current_thread_id} (index {current_thread_index}) ↔ {target_thread_id} (index {target_thread_index})")
 
-    def add_node_at_center(self):
-        # 始终将其添加到 main_y_baseline 的主轴上轮廓
-        new_data = {
-            "node_name": "New Node", 
-            "node_type": "llm-first", 
-            "task_prompt": ""
-        }
-        self.add_node(new_data, 0, self.main_y_baseline)
-
+    def add_main_node(self):
+        node_id = self.next_node_id
+        
+        if "main" not in self.thread_view_indices:
+             self.thread_view_indices["main"] = 0
+             
+        node_data = NodeProperties(**{
+            "node_name": "New Node",
+            "node_type": "llm-first",
+            "thread_id": "main",
+            "task_prompt": "",
+            "node_id": node_id, 
+            "thread_view_index": self.thread_view_indices["main"],
+        })
+        self.add_node(node_data)
     # ==================== 多 Pattern 数据管理 ====================
     
     def load_from_file(self, file_path: str) -> List[str]:
