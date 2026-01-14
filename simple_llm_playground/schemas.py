@@ -10,8 +10,8 @@ from llm_linear_executor.schemas import (
 from pydantic import Field, model_validator
 from typing import Optional, Any
 from pydantic import BaseModel
-
-ModelConfig = dict
+from enum import Enum
+from datetime import datetime
 
 # 布局常量 (与 graph.py 保持一致)
 NODE_GAP_X = 200  # 节点之间的水平间距
@@ -73,7 +73,7 @@ class GuiExecutionPlan(ExecutionPlan):
     - y: 由 thread_view_index 决定的垂直位置
     """
     nodes: list[NodeProperties] = Field(description="包含 UI 布局信息的节点列表")
-    thread_view_indices: dict[str, int] = Field(default={},description="thread_id 到 thread_view_index 的映射")
+    threadId_map_viewId: dict[str, int] = Field(default={},description="thread_id 到 thread_view_index 的映射")
     @model_validator(mode='after')
     def _init_nodes(self) -> 'GuiExecutionPlan':
         """
@@ -106,21 +106,21 @@ class GuiExecutionPlan(ExecutionPlan):
             # 如果已有值，优先使用已保存的值
             if node.thread_view_index != 0 or (tid == "main" and node.thread_view_index == 0):
                 # 如果节点已有非0的 thread_view_index，或是 main 线程（默认0是正确的），使用它
-                if tid not in self.thread_view_indices:
-                    self.thread_view_indices[tid] = node.thread_view_index
+                if tid not in self.threadId_map_viewId:
+                    self.threadId_map_viewId[tid] = node.thread_view_index
             
-            if tid not in self.thread_view_indices:
+            if tid not in self.threadId_map_viewId:
                 # 为新的 thread_id 分配索引
                 # main 线程为 0，其他线程依次递增
                 if tid == "main":
-                    self.thread_view_indices[tid] = 0
+                    self.threadId_map_viewId[tid] = 0
                 else:
                     # 分配新索引: max + 1
-                    current_indices = list(self.thread_view_indices.values())
+                    current_indices = list(self.threadId_map_viewId.values())
                     next_idx = max(current_indices) + 1 if current_indices else 1
-                    self.thread_view_indices[tid] = next_idx
+                    self.threadId_map_viewId[tid] = next_idx
             
-            node.thread_view_index = self.thread_view_indices[tid]
+            node.thread_view_index = self.threadId_map_viewId[tid]
             
             # [已移除] x, y 坐标由 NodeProperties.__setattr__ 自动计算
             # 当 node_id 被设置时自动计算 x = (node_id - 1) * NODE_GAP_X
@@ -129,15 +129,58 @@ class GuiExecutionPlan(ExecutionPlan):
         return self
         
 
+ModelConfig = dict
+class NodeStatus(str, Enum):
+    """节点执行状态"""
+    PENDING = "pending"
+    RUNNING = "running"
+    COMPLETED = "completed"
+    FAILED = "failed"
 
 
+class NodeExecutionState(BaseModel):
+    """节点执行状态记录"""
+    node_id: int
+    node_name: str
+    status: NodeStatus = NodeStatus.PENDING
+    start_time: Optional[datetime] = None
+    end_time: Optional[datetime] = None
+    error: Optional[str] = None
+
+
+class NodeContext(BaseModel):
+    """节点上下文信息 - 用于前端展示"""
+    node_id: int
+    node_name: str
+    thread_id: str
+    thread_messages_before: list[dict] = []  # 执行前的线程消息
+    thread_messages_after: list[dict] = []   # 执行后的线程消息
+    llm_input: str = ""                       # LLM 输入 prompt
+    llm_output: str = ""                      # LLM 输出
+    tool_calls: list[dict] = []               # 工具调用记录
+    data_out_content: Optional[str] = None    # 输出到父线程的内容
+
+
+# =========================================================================
+# API 数据模型 (Requests & Responses)
+# =========================================================================
+
+# 1. Health Check (GET /)
+class HealthCheckResponse(BaseModel):
+    """健康检查响应"""
+    status: str
+    message: str
+
+# 2. List Tools (GET /api/tools)
+class ToolListResponse(BaseModel):
+    """获取工具列表响应"""
+    tools: list[str]
+
+# 3. Init Executor (POST /api/executor/init)
 class InitExecutorRequest(BaseModel):
     """初始化执行器请求"""
     plan: dict  # ExecutionPlan 的字典形式
-    user_message: str
     default_tool_limit: Optional[int] = 1  # 默认工具调用次数限制
-    llm_config: Optional[ModelConfig] = None  # 重命名避免与 Pydantic 保留字段冲突
-
 
 class InitExecutorResponse(BaseModel):
     """初始化执行器响应"""
@@ -146,12 +189,29 @@ class InitExecutorResponse(BaseModel):
     node_count: int
     message: str
 
+# 4. Run Executor (POST /api/executor/{id}/run)
+# Request: URL Parameters only (executor_id)
+class ExecutionResultResponse(BaseModel):
+    """执行结果响应 - 用于 Run Executor"""
+    executor_id: str
+    status: str
+    content: Optional[str]
+    tokens_usage: dict
+    message: str
 
+# 5. Step Executor (POST /api/executor/{id}/step)
 class StepExecutorRequest(BaseModel):
     """单步执行请求"""
     node_id: Optional[int] = None  # 可选，不指定则执行下一个
 
+class StepExecutorResponse(BaseModel):
+    """单步执行响应"""
+    status: str
+    message: str
+    node_context: Optional[dict] = None
+    progress: Optional[dict] = None
 
+# 6. Get Executor Status (GET /api/executor/{id}/status)
 class ExecutorStatusResponse(BaseModel):
     """执行器状态响应"""
     executor_id: str
@@ -159,7 +219,24 @@ class ExecutorStatusResponse(BaseModel):
     progress: dict
     node_states: list[dict]
 
+# 7. Terminate Executor (DELETE /api/executor/{id})
+class TerminateExecutorResponse(BaseModel):
+    """终止执行器响应"""
+    status: str
+    message: str
 
+# 8. List Executors (GET /api/executors)
+class ExecutorInfo(BaseModel):
+    """执行器简要信息"""
+    executor_id: str
+    start_time: str
+    status: str
+
+class ListExecutorsResponse(BaseModel):
+    """列出执行器响应"""
+    executors: list[ExecutorInfo]
+
+# 9. Get Node Context (GET /api/executor/{id}/nodes/{node_id}/context)
 class NodeContextResponse(BaseModel):
     """节点上下文响应"""
     node_id: int
@@ -172,14 +249,11 @@ class NodeContextResponse(BaseModel):
     tool_calls: list[dict]
     data_out_content: Optional[str]
 
-
-class ExecutionResultResponse(BaseModel):
-    """执行结果响应"""
+# 10. Get Executor Messages (GET /api/executor/{id}/messages)
+class ExecutorMessagesResponse(BaseModel):
+    """获取执行器消息响应"""
     executor_id: str
-    status: str
-    content: Optional[str]
-    tokens_usage: dict
-    message: str
+    messages: list[dict]
 
 if __name__ == "__main__":
     from llm_linear_executor.os_plan import load_plans_from_templates
