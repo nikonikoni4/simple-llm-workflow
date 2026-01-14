@@ -91,7 +91,7 @@ class GuiExecutionPlan(ExecutionPlan):
                 node_type="llm-first",
                 node_name="Main Start",
                 thread_id="main",
-                task_prompt="Start of main thread",
+                task_prompt="",
             )
             self.nodes.insert(0, empty_main_node)
 
@@ -172,9 +172,15 @@ class HealthCheckResponse(BaseModel):
     message: str
 
 # 2. List Tools (GET /api/tools)
+class ToolInfo(BaseModel):
+    """工具信息"""
+    name: str
+    description: str = "No description"
+    parameters: Optional[dict[str, Any]] = None
+
 class ToolListResponse(BaseModel):
     """获取工具列表响应"""
-    tools: list[str]
+    tools: list[ToolInfo]
 
 # 3. Init Executor (POST /api/executor/init)
 class InitExecutorRequest(BaseModel):
