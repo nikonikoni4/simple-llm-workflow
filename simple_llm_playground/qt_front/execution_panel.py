@@ -26,8 +26,6 @@ class ExecutionControlPanel(QWidget):
     执行控制面板
     
     提供：
-    - 用户消息输入
-    - 模型配置（可选展开）
     - 执行控制按钮（初始化、单步、全量、停止）
     - 执行状态和进度显示
     """
@@ -56,18 +54,6 @@ class ExecutionControlPanel(QWidget):
         main_layout.setContentsMargins(10, 10, 10, 10)
         main_layout.setSpacing(10)
         
-        # === 用户消息区域 ===
-        message_group = QGroupBox("User Message")
-        message_layout = QVBoxLayout(message_group)
-        
-        self.message_input = QTextEdit()
-        self.message_input.setPlaceholderText("Enter the user message to start execution...")
-        self.message_input.setMaximumHeight(80)
-        message_layout.addWidget(self.message_input)
-        
-        main_layout.addWidget(message_group)
-        
-        main_layout.addWidget(message_group)
         
         # === 控制按钮区域 ===
         control_group = QGroupBox("Execution Control")
@@ -184,11 +170,7 @@ class ExecutionControlPanel(QWidget):
         if not self._plan_data:
             QMessageBox.warning(self, "Warning", "No execution plan set. Please design your flow first.")
             return
-        
-        user_message = self.message_input.toPlainText().strip()
-        if not user_message:
-            QMessageBox.warning(self, "Warning", "Please enter a user message.")
-            return
+
         
         # 更新 UI 状态
         self.init_btn.setEnabled(False)
@@ -196,7 +178,7 @@ class ExecutionControlPanel(QWidget):
         self.status_label.setStyleSheet("color: #FFC107; font-weight: bold;")
         
         # 调用控制器初始化
-        self.controller.init_executor(self._plan_data, user_message)
+        self.controller.init_executor(self._plan_data)
     
     def step_execute(self):
         """单步执行"""

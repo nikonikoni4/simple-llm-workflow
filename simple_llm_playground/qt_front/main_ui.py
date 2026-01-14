@@ -2,7 +2,7 @@ import sys
 import json
 import requests
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QVBoxLayout, QWidget, QHBoxLayout, 
-                             QAction, QFileDialog, QSplitter, QLabel, QLineEdit, QComboBox)
+                             QAction, QFileDialog, QSplitter, QLabel, QLineEdit, QComboBox, QMessageBox)
 from PyQt5.QtCore import Qt, QThread, pyqtSignal
 
 # 本地导入
@@ -17,26 +17,7 @@ from simple_llm_playground.config import BACKEND_PORT
 # 逻辑/后端导入
 from simple_llm_playground.schemas import ALL_NODE_TYPES, NodeProperties, GuiExecutionPlan
 
-
-class ContextLoaderThread(QThread):
-    contextLoaded = pyqtSignal(dict)
-    
-    def __init__(self, port, run_id, node_id):
-        super().__init__()
-        self.port = port
-        self.run_id = run_id
-        self.node_id = node_id
-        
-    def run(self):
-        try:
-            url = f"http://localhost:{self.port}/api/context/{self.run_id}/{self.node_id}"
-            # 超时时间较短，以避免线程滞留，但对于本地后端来说足够了
-            resp = requests.get(url, timeout=1.0) 
-            if resp.status_code == 200:
-                self.contextLoaded.emit(resp.json())
-        except Exception:
-            # 静默失败或干脆不发送信号轮廓
-            pass
+from simple_llm_playground.qt_front.execution_panel import ExecutionControlPanel
 
 
 class MainWindow(QMainWindow):
@@ -92,6 +73,10 @@ class MainWindow(QMainWindow):
         
         left_panel_layout.addLayout(task_layout)
         
+        # 执行控制面板
+        self.execution_panel = ExecutionControlPanel()
+        left_panel_layout.addWidget(self.execution_panel)
+        
         # 上下文/执行面板
         self.context_panel = NodeContextPanel()
         left_panel_layout.addWidget(self.context_panel)
@@ -127,12 +112,64 @@ class MainWindow(QMainWindow):
         self.graph_view.currentPatternChanged.connect(self.on_current_pattern_changed)
         self.pattern_combo.currentTextChanged.connect(self.on_pattern_combo_changed)
         
-        # Task 输入变化时同步到 Graph
+        # Task 输入变化时同步到 Graph 并更新执行计划
         self.task_input.textChanged.connect(self.on_task_changed)
+        self.task_input.textChanged.connect(self._update_execution_plan)
         
+        # === 执行面板信号 ===
+        self.execution_panel.stepExecuted.connect(self._on_step_executed)
+        self.execution_panel.nodeStatesUpdated.connect(self._on_node_states_updated)
+        self.execution_panel.executionError.connect(self._on_execution_error)
+        self.execution_panel.saveRequested.connect(self._update_execution_plan)
+        
+        # 上下文相关信号
+        self.execution_panel.controller.contextLoaded.connect(self._on_context_loaded)
+        self.execution_panel.controller.contextFailed.connect(self._on_context_failed)
+
         # 初始状态
         self._switching_pattern = False  # 防止循环触发
 
+
+    def _update_execution_plan(self):
+        """当节点数据或任务变更时，更新 execution_panel 的计划"""
+        nodes = self.graph_view.get_all_nodes_data() # List[NodeProperties]
+        # Pydantic 转 dict
+        nodes_dicts = [n.model_dump() for n in nodes]
+        
+        current_task = self.task_input.text()
+        
+        plan_data = {
+            "task": current_task,
+            "nodes": nodes_dicts
+        }
+        self.execution_panel.set_plan(plan_data)
+
+    def _on_step_executed(self, node_context: dict):
+        """单步执行完成回调"""
+        # 更新该节点的上下文显示
+        self.context_panel.load_node_context_from_api(node_context)
+        
+        # 更新节点状态为完成
+        node_id = node_context.get("node_id")
+        if node_id:
+            self.graph_view.update_node_status(node_id, "completed")
+
+    def _on_node_states_updated(self, node_states: list):
+        """批量更新节点状态"""
+        for state in node_states:
+            node_id = state.get("node_id")
+            status = state.get("status", "pending")
+            self.graph_view.update_node_status(node_id, status)
+
+    def _on_execution_error(self, error: str):
+        QMessageBox.warning(self, "Execution Error", error)
+
+    def _on_context_loaded(self, context_data: dict):
+        self.context_panel.load_node_context_from_api(context_data)
+
+    def _on_context_failed(self, error: str):
+        # 简单处理：仅打印或忽略，用户点其他节点会重试
+        print(f"Failed to load context: {error}")
 
     def on_node_selected(self, node_data):
         # 1. 转换数据为 NodeProperties 对象 (如果是字典则转换)
@@ -187,28 +224,22 @@ class MainWindow(QMainWindow):
         # 3. 加载 UI 显示相关的上下文 (占位符)
         self.context_panel.load_node_context(node_props)
         
-        # 如果之前的加载器处于活动状态，则取消/断开连接
-        if hasattr(self, 'ctx_loader') and self.ctx_loader is not None:
-            if self.ctx_loader.isRunning():
-                # 断开信号以忽略之前选择的结果
-                try: 
-                    self.ctx_loader.contextLoaded.disconnect() 
-                except TypeError: 
-                    pass # 尚未连接
-            self.ctx_loader = None
-
-        # 尝试在后台从后端获取上下文
-        run_id = "run1" # TODO: 使其动态化
-        
-        self.ctx_loader = ContextLoaderThread(BACKEND_PORT, run_id, node_data.node_id)
-        self.ctx_loader.contextLoaded.connect(self.context_panel.load_node_context_from_api)
-        self.ctx_loader.start()
-
-
+        # 4. 如果执行器已初始化，尝试从后端加载真实上下文
+        executor_id = getattr(self.execution_panel.controller, "current_executor_id", None)
+        if executor_id:
+            # 确保使用正确的 node_id
+            nid = getattr(node_props, "node_id", None)
+            if nid is None and isinstance(node_props, dict):
+                 nid = node_props.get("id")
+            
+            if nid is not None:
+                self.execution_panel.controller.get_node_context(nid)
 
     def on_node_data_changed(self):
         # 如果数据更改影响了连接（如 thread_id），则更新图形视图中的连接
         self.graph_view.update_connections()
+        # 更新执行计划
+        self._update_execution_plan()
         
     def on_branch_changed(self, node_data):
         """处理分支 (thread_id) 更改以更新节点颜色"""
@@ -231,6 +262,8 @@ class MainWindow(QMainWindow):
         """当 Graph 内部切换 pattern 后的回调"""
         # 同步 task 输入框
         self.task_input.setText(plan.task or "")
+        # 更新执行面板的计划
+        self._update_execution_plan()
     
     def on_pattern_combo_changed(self, pattern_name: str):
         """当用户从 ComboBox 选择不同 pattern 时"""

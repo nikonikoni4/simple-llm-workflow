@@ -1,30 +1,29 @@
 import requests
 import json
+import asyncio
 from PyQt5.QtCore import QObject, QThread, pyqtSignal
 
 # 默认端口配置
-# 默认端口配置
 from simple_llm_playground.config import BACKEND_PORT
 
-class APIWorker(QThread):
-    """
-    通用工作线程，用于在后台执行阻塞的 API 调用。
-    """
-    finished = pyqtSignal(object)  # 发送成功结果 (通常是 dict/list)
-    error = pyqtSignal(str)        # 发送错误消息
+from typing import Optional
+import aiohttp
+from simple_llm_playground.schemas import (
+    InitExecutorRequest, InitExecutorResponse,
+    StepExecutorRequest, StepExecutorResponse,
+    ExecutorStatusResponse, ExecutionResultResponse,
+    HealthCheckResponse, ToolListResponse,
+    TerminateExecutorResponse, ListExecutorsResponse,
+    NodeContextResponse, ExecutorMessagesResponse
+)
 
-    def __init__(self, func, *args, **kwargs):
-        super().__init__()
-        self.func = func
-        self.args = args
-        self.kwargs = kwargs
 
-    def run(self):
-        try:
-            result = self.func(*self.args, **self.kwargs)
-            self.finished.emit(result)
-        except Exception as e:
-            self.error.emit(str(e))
+class APIError(Exception):
+    """API 错误"""
+    def __init__(self, status_code: int, message: str):
+        self.status_code = status_code
+        self.message = message
+        super().__init__(f"API Error {status_code}: {message}")
 
 
 class ApiClient(QObject):
@@ -32,115 +31,441 @@ class ApiClient(QObject):
     单例 API 客户端，用于处理与后端的通信。
     支持同步和异步（基于信号）调用。
     """
-    _instance = None
-
-    def __new__(cls, *args, **kwargs):
-        if cls._instance is None:
-            cls._instance = super(ApiClient, cls).__new__(cls)
-            # 仅初始化一次 QObject 部分
-            super(ApiClient, cls._instance).__init__()
-            cls._instance._initialized = False
-        return cls._instance
-
-    def __init__(self, base_url=None):
-        # 确保 __init__ 只运行一次
-        if getattr(self, '_initialized', False):
-            return
-            
-        self._initialized = True
-        
-        if base_url:
-            self.base_url = base_url.rstrip('/')
-        else:
-            self.base_url = f"http://localhost:{BACKEND_PORT}"
-            
-        self.timeout = 5.0 # 默认超时时间（秒）
-
-    def _get_url(self, endpoint):
-        if endpoint.startswith("http"):
-            return endpoint
-        return f"{self.base_url}/{endpoint.lstrip('/')}"
-
-    # --- 同步方法 (阻塞) ---
-
-    def get_sync(self, endpoint, params=None):
-        """
-        执行同步 GET 请求。
-        返回解析后的 JSON 或抛出异常。
-        """
-        try:
-            url = self._get_url(endpoint)
-            response = requests.get(url, params=params, timeout=self.timeout)
-            response.raise_for_status()
-            return response.json()
-        except requests.exceptions.RequestException as e:
-            raise Exception(f"API Request Failed: {e}")
-
-    def post_sync(self, endpoint, data=None):
-        """
-        执行同步 POST 请求。
-        返回解析后的 JSON 或抛出异常。
-        """
-        try:
-            url = self._get_url(endpoint)
-            response = requests.post(url, json=data, timeout=self.timeout)
-            response.raise_for_status()
-            return response.json()
-        except requests.exceptions.RequestException as e:
-            raise Exception(f"API Request Failed: {e}")
-
-    # --- 异步方法 (非阻塞) ---
+     
+    def __init__(self, base_url: str = f"http://localhost:{BACKEND_PORT}"):
+        self.base_url = base_url.rstrip("/")
+        self._session: Optional[aiohttp.ClientSession] = None
     
-    def async_get(self, endpoint, callback=None, error_callback=None, params=None):
-        """
-        启动后台线程执行 GET 请求。
-        api_client.async_get('/api/node/1', self.success_handler)
+    async def _get_session(self) -> aiohttp.ClientSession:
+        """获取或创建 aiohttp session"""
+        if self._session is None or self._session.closed:
+            self._session = aiohttp.ClientSession()
+        return self._session
+    
+    async def close(self):
+        """关闭 session"""
+        if self._session and not self._session.closed:
+            await self._session.close()
+    
+    async def _request(
+        self, 
+        method: str, 
+        endpoint: str, 
+        json_data: dict = None,
+        params: dict = None
+    ) -> dict:
+        """发送 HTTP 请求"""
+        session = await self._get_session()
+        url = f"{self.base_url}{endpoint}"
         
-        返回工作线程实例 (如果需要可以保留引用，
-        但通常如果连接了回调函数，则不是严格必需的)。
+        try:
+            async with session.request(
+                method, 
+                url, 
+                json=json_data,
+                params=params
+            ) as response:
+                data = await response.json()
+                
+                if response.status >= 400:
+                    error_detail = data.get("detail", str(data))
+                    raise APIError(response.status, error_detail)
+                
+                return data
+                
+        except aiohttp.ClientError as e:
+            raise APIError(0, f"Connection error: {str(e)}")
+    
+    # =========================================================================
+    # 健康检查
+    # =========================================================================
+    
+    async def health_check(self) -> HealthCheckResponse:
+        """检查后端服务是否运行"""
+        data = await self._request("GET", "/")
+        return HealthCheckResponse(**data)
+    
+    # =========================================================================
+    # 工具管理
+    # =========================================================================
+    
+    async def list_tools(self) -> ToolListResponse:
+        """获取已注册的工具列表"""
+        data = await self._request("GET", "/api/tools")
+        return ToolListResponse(**data)
+    
+    # =========================================================================
+    # 执行器生命周期
+    # =========================================================================
+    
+    async def init_executor(
+        self,
+        plan: dict,
+        default_tool_limit: int = 1,
+    ) -> InitExecutorResponse:
         """
-        worker = APIWorker(self.get_sync, endpoint, params=params)
+        初始化执行器
         
-        if callback:
-            worker.finished.connect(callback)
-        if error_callback:
-            worker.error.connect(error_callback)
+        Args:
+            plan: 执行计划 (ExecutionPlan 的字典形式)
+            default_tool_limit: 默认工具调用次数限制
             
-        # 完成后自动清理线程
-        worker.finished.connect(worker.deleteLater)
-        worker.error.connect(worker.deleteLater)
-        
-        worker.start()
-        return worker
-
-    def async_post(self, endpoint, callback=None, error_callback=None, data=None):
+        Returns:
+            InitExecutorResponse: 包含 executor_id, status, node_count, message
         """
-        启动后台线程执行 POST 请求。
+        req = InitExecutorRequest(
+            plan=plan,
+            default_tool_limit=default_tool_limit,
+        )
+        data = await self._request("POST", "/api/executor/init", json_data=req.model_dump(by_alias=True))
+        return InitExecutorResponse(**data)
+    
+    async def run_executor(self, executor_id: str, sync: bool = False) -> ExecutionResultResponse:
         """
-        worker = APIWorker(self.post_sync, endpoint, data=data)
+        运行执行器
         
-        if callback:
-            worker.finished.connect(callback)
-        if error_callback:
-            worker.error.connect(error_callback)
+        Args:
+            executor_id: 执行器 ID
+            sync: 是否同步执行（等待完成）
             
-        worker.finished.connect(worker.deleteLater)
-        worker.error.connect(worker.deleteLater)
+        Returns:
+            ExecutionResultResponse: 执行结果
+        """
+        endpoint = f"/api/executor/{executor_id}/run"
+        if sync:
+            endpoint = f"/api/executor/{executor_id}/run-sync"
         
-        worker.start()
-        return worker
+        data = await self._request("POST", endpoint)
+        return ExecutionResultResponse(**data)
+    
+    async def step_executor(self, executor_id: str, node_id: int = None) -> StepExecutorResponse:
+        """
+        单步执行
+        
+        Args:
+            executor_id: 执行器 ID
+            node_id: 可选，指定要执行的节点 ID
+            
+        Returns:
+            StepExecutorResponse: 包含 status, message, node_context, progress
+        """
+        req = StepExecutorRequest(node_id=node_id)
+        
+        data = await self._request(
+            "POST", 
+            f"/api/executor/{executor_id}/step",
+            json_data=req.model_dump(exclude_none=True) if node_id is not None else None
+        )
+        return StepExecutorResponse(**data)
+    
+    async def get_executor_status(self, executor_id: str) -> ExecutorStatusResponse:
+        """
+        获取执行器状态
+        
+        Args:
+            executor_id: 执行器 ID
+            
+        Returns:
+            ExecutorStatusResponse: 包含 executor_id, overall_status, progress, node_states
+        """
+        data = await self._request("GET", f"/api/executor/{executor_id}/status")
+        return ExecutorStatusResponse(**data)
+    
+    async def terminate_executor(self, executor_id: str) -> TerminateExecutorResponse:
+        """
+        终止执行器
+        
+        Args:
+            executor_id: 执行器 ID
+            
+        Returns:
+            TerminateExecutorResponse: 包含 status, message
+        """
+        data = await self._request("DELETE", f"/api/executor/{executor_id}")
+        return TerminateExecutorResponse(**data)
+    
+    async def list_executors(self) -> ListExecutorsResponse:
+        """
+        列出所有执行器
+        
+        Returns:
+            ListExecutorsResponse: 执行器信息列表
+        """
+        data = await self._request("GET", "/api/executors")
+        return ListExecutorsResponse(**data)
+    
+    # =========================================================================
+    # 节点上下文
+    # =========================================================================
+    
+    async def get_node_context(self, executor_id: str, node_id: int) -> NodeContextResponse:
+        """
+        获取节点上下文
+        
+        Args:
+            executor_id: 执行器 ID
+            node_id: 节点 ID
+            
+        Returns:
+            NodeContextResponse: 节点上下文信息
+        """
+        data = await self._request(
+            "GET", 
+            f"/api/executor/{executor_id}/nodes/{node_id}/context"
+        )
+        return NodeContextResponse(**data)
+    
+    async def get_executor_messages(
+        self, 
+        executor_id: str, 
+        thread_id: str = None
+    ) -> dict:
+        """
+        获取执行器消息
+        
+        Args:
+            executor_id: 执行器 ID
+            thread_id: 可选，指定线程 ID
+            
+        Returns:
+            dict: 消息数据
+        """
+        params = {}
+        if thread_id:
+            params["thread_id"] = thread_id
+            
+        return await self._request(
+            "GET",
+            f"/api/executor/{executor_id}/messages",
+            params=params if params else None
+        )
+    
+    # =========================================================================
+    # 同步包装器（用于非异步环境）
+    # =========================================================================
+    
+    def sync_health_check(self) -> HealthCheckResponse:
+        """同步健康检查"""
+        return asyncio.run(self.health_check())
+    
+    def sync_init_executor(
+        self,
+        plan: dict,
+        default_tool_limit: int = 1,
+    ) -> InitExecutorResponse:
+        """同步初始化执行器"""
+        return asyncio.run(self.init_executor(plan, default_tool_limit))
+    
+    def sync_run_executor(self, executor_id: str, sync: bool = False) -> ExecutionResultResponse:
+        """同步运行执行器"""
+        return asyncio.run(self.run_executor(executor_id, sync))
+    
+    def sync_step_executor(self, executor_id: str, node_id: int = None) -> StepExecutorResponse:
+        """同步单步执行"""
+        return asyncio.run(self.step_executor(executor_id, node_id))
+    
+    def sync_get_executor_status(self, executor_id: str) -> ExecutorStatusResponse:
+        """同步获取执行器状态"""
+        return asyncio.run(self.get_executor_status(executor_id))
+    
+    def sync_get_node_context(self, executor_id: str, node_id: int) -> NodeContextResponse:
+        """同步获取节点上下文"""
+        return asyncio.run(self.get_node_context(executor_id, node_id))
+    
+    def sync_terminate_executor(self, executor_id: str) -> TerminateExecutorResponse:
+        """同步终止执行器"""
+        return asyncio.run(self.terminate_executor(executor_id))
 
-    # --- 特定业务逻辑方法封装 ---
 
-    def fetch_node_context(self, run_id, node_id, callback, error_callback=None):
-        """
-        获取特定节点的执行上下文。
-        """
-        endpoint = f"/api/context/{run_id}/{node_id}"
-        return self.async_get(endpoint, callback, error_callback)
 
-    def trigger_run(self, plan_data, callback, error_callback=None):
+# =============================================================================
+# PyQt 异步工作线程
+# =============================================================================
+
+try:
+    
+    class AsyncWorker(QThread):
         """
-        开始执行一个计划。
+        异步任务工作线程
+        
+        在独立线程中运行 asyncio 事件循环，用于 PyQt 应用
         """
-        return self.async_post("/api/run", callback, error_callback, data=plan_data)
+        
+        # 信号定义
+        taskCompleted = pyqtSignal(str, object)  # (task_id, result)
+        taskFailed = pyqtSignal(str, str)  # (task_id, error_message)
+        
+        def __init__(self, parent=None):
+            super().__init__(parent)
+            self.loop: Optional[asyncio.AbstractEventLoop] = None
+            self._running = False
+            self._pending_tasks: dict[str, asyncio.Future] = {}
+        
+        def run(self):
+            """线程主函数"""
+            self.loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(self.loop)
+            self._running = True
+            
+            try:
+                self.loop.run_forever()
+            finally:
+                self.loop.close()
+                self._running = False
+        
+        def stop(self):
+            """停止事件循环"""
+            if self.loop and self._running:
+                self.loop.call_soon_threadsafe(self.loop.stop)
+        
+        def run_async(self, coro, task_id: str = None) -> asyncio.Future:
+            """
+            在事件循环中运行协程
+            
+            Args:
+                coro: 要运行的协程
+                task_id: 任务标识符（用于结果回调）
+                
+            Returns:
+                Future 对象
+            """
+            if not self.loop or not self._running:
+                raise RuntimeError("Event loop is not running")
+            
+            future = asyncio.run_coroutine_threadsafe(coro, self.loop)
+            
+            if task_id:
+                self._pending_tasks[task_id] = future
+                
+                def on_done(f):
+                    try:
+                        result = f.result()
+                        self.taskCompleted.emit(task_id, result)
+                    except Exception as e:
+                        self.taskFailed.emit(task_id, str(e))
+                    finally:
+                        self._pending_tasks.pop(task_id, None)
+                
+                future.add_done_callback(on_done)
+            
+            return future
+    
+    
+    class ExecutorController(QObject):
+        """
+        执行器控制器
+        
+        封装 API 客户端和异步工作线程，提供 PyQt 友好的接口
+        """
+        
+        # 信号定义
+        initCompleted = pyqtSignal(dict)
+        initFailed = pyqtSignal(str)
+        stepCompleted = pyqtSignal(dict)
+        stepFailed = pyqtSignal(str)
+        runCompleted = pyqtSignal(dict)
+        runFailed = pyqtSignal(str)
+        statusUpdated = pyqtSignal(dict)
+        contextLoaded = pyqtSignal(dict)
+        contextFailed = pyqtSignal(str)
+        
+        def __init__(self, base_url: str = f"http://localhost:{BACKEND_PORT}", parent=None):
+            super().__init__(parent)
+            self.api_client = ApiClient(base_url)
+            self.worker = AsyncWorker()
+            self.current_executor_id: Optional[str] = None
+            
+            # 连接工作线程信号
+            self.worker.taskCompleted.connect(self._on_task_completed)
+            self.worker.taskFailed.connect(self._on_task_failed)
+            
+            # 启动工作线程
+            self.worker.start()
+        
+        def cleanup(self):
+            """清理资源"""
+            self.worker.stop()
+            self.worker.wait()
+            asyncio.run(self.api_client.close())
+
+        def reset_session(self):
+            """重置会话 (用于处理 404 等由于后端重启导致的 ID 失效)"""
+            self.current_executor_id = None
+        
+        def _on_task_completed(self, task_id: str, result):
+            """处理任务完成"""
+            # 如果 result 是 Pydantic 对象，转换为 dict
+            if hasattr(result, 'model_dump'):
+                result_dict = result.model_dump()
+            else:
+                result_dict = result
+            
+            if task_id == "init":
+                self.current_executor_id = result_dict.get("executor_id")
+                self.initCompleted.emit(result_dict)
+            elif task_id == "step":
+                self.stepCompleted.emit(result_dict)
+            elif task_id == "run":
+                self.runCompleted.emit(result_dict)
+            elif task_id == "status":
+                self.statusUpdated.emit(result_dict)
+            elif task_id.startswith("context_"):
+                self.contextLoaded.emit(result_dict)
+        
+        def _on_task_failed(self, task_id: str, error: str):
+            """处理任务失败"""
+            if task_id == "init":
+                self.initFailed.emit(error)
+            elif task_id == "step":
+                self.stepFailed.emit(error)
+            elif task_id == "run":
+                self.runFailed.emit(error)
+            elif task_id.startswith("context_"):
+                self.contextFailed.emit(error)
+        
+        def init_executor(self, plan: dict):
+            """初始化执行器"""
+            coro = self.api_client.init_executor(plan)
+            self.worker.run_async(coro, "init")
+        
+        def step_executor(self):
+            """单步执行"""
+            if not self.current_executor_id:
+                self.stepFailed.emit("No executor initialized")
+                return
+            coro = self.api_client.step_executor(self.current_executor_id)
+            self.worker.run_async(coro, "step")
+        
+        def run_executor(self, sync: bool = True):
+            """运行执行器"""
+            if not self.current_executor_id:
+                self.runFailed.emit("No executor initialized")
+                return
+            coro = self.api_client.run_executor(self.current_executor_id, sync)
+            self.worker.run_async(coro, "run")
+        
+        def get_status(self):
+            """获取执行器状态"""
+            if not self.current_executor_id:
+                return
+            coro = self.api_client.get_executor_status(self.current_executor_id)
+            self.worker.run_async(coro, "status")
+        
+        def get_node_context(self, node_id: int):
+            """获取节点上下文"""
+            if not self.current_executor_id:
+                self.contextFailed.emit("No executor initialized")
+                return
+            coro = self.api_client.get_node_context(self.current_executor_id, node_id)
+            self.worker.run_async(coro, f"context_{node_id}")
+        
+        def terminate(self):
+            """终止当前执行器"""
+            if self.current_executor_id:
+                coro = self.api_client.terminate_executor(self.current_executor_id)
+                self.worker.run_async(coro, "terminate")
+                self.current_executor_id = None
+
+except ImportError:
+    # PyQt5 不可用时，这些类将不会被定义
+    pass
