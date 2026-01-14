@@ -1,0 +1,374 @@
+{
+  "custom": {
+    "task": "总结今天我做了什么",
+    "nodes": [
+      {
+        "node_type": "llm-first",
+        "node_name": "Main Start",
+        "thread_id": "main",
+        "task_prompt": "",
+        "enable_tool_loop": false,
+        "data_in_thread": "main",
+        "data_in_slice": [
+          0,
+          1
+        ],
+        "data_out_thread": "main",
+        "data_out": false,
+        "data_out_description": "",
+        "node_id": 1,
+        "thread_view_index": 0,
+        "x": 0,
+        "y": 0
+      },
+      {
+        "node_type": "llm-first",
+        "node_name": "空节点，创建线程summary，为了不污染main的context，用来存放每个单独分析的部分的结果",
+        "thread_id": "summary",
+        "task_prompt": "",
+        "enable_tool_loop": false,
+        "data_in_thread": "main",
+        "data_in_slice": [
+          0,
+          1
+        ],
+        "data_out_thread": "main",
+        "data_out": false,
+        "data_out_description": "",
+        "node_id": 2,
+        "thread_view_index": 1,
+        "x": 200,
+        "y": -120
+      },
+      {
+        "node_type": "tool-first",
+        "node_name": "获取活跃分布数据",
+        "thread_id": "active_distribution_node",
+        "task_prompt": "20字内简单回答：分析24小时电脑使用强度分布，识别高峰与低谷时段，并推测可能的作息规律或干扰因素。",
+        "enable_tool_loop": false,
+        "initial_tool_name": "get_daily_stats",
+        "initial_tool_args": {
+          "module": "active_distribution"
+        },
+        "data_in_thread": "main",
+        "data_in_slice": [
+          0,
+          1
+        ],
+        "data_out_thread": "summary",
+        "data_out": true,
+        "data_out_description": "活跃分布原始数据",
+        "node_id": 3,
+        "thread_view_index": 2,
+        "x": 400,
+        "y": -240
+      },
+      {
+        "node_type": "tool-first",
+        "node_name": "获取分时段行为数据",
+        "thread_id": "behavior_stats_node",
+        "task_prompt": "20字内简单回答：解析四个时段的行为分类占比与主要活动记录，推测各时段主导任务类型、专注度水平及潜在时间浪费点。",
+        "enable_tool_loop": false,
+        "initial_tool_name": "get_daily_stats",
+        "initial_tool_args": {
+          "module": "behavior_stats"
+        },
+        "data_in_thread": "main",
+        "data_in_slice": [
+          0,
+          1
+        ],
+        "data_out_thread": "summary",
+        "data_out": true,
+        "data_out_description": "分时段行为原始数据",
+        "node_id": 4,
+        "thread_view_index": 3,
+        "x": 600,
+        "y": -360
+      },
+      {
+        "node_type": "tool-first",
+        "node_name": "获取目标投入数据",
+        "thread_id": "target_investment_node",
+        "task_prompt": "20字内简单回答：提取核心项目实际投入时长，对照预期目标评估完成度；结合行为记录推测目标推进质量（如是否集中于关键子任务）。",
+        "enable_tool_loop": false,
+        "initial_tool_name": "get_daily_stats",
+        "initial_tool_args": {
+          "module": "target_investment"
+        },
+        "data_in_thread": "main",
+        "data_in_slice": [
+          0,
+          1
+        ],
+        "data_out_thread": "summary",
+        "data_out": true,
+        "data_out_description": "目标投入原始数据",
+        "node_id": 5,
+        "thread_view_index": 4,
+        "x": 800,
+        "y": -480
+      },
+      {
+        "node_type": "tool-first",
+        "node_name": "获取任务状态数据",
+        "thread_id": "task_status_node",
+        "task_prompt": "20字内简单回答：解析今日focus事项与todos完成状态，结合活动记录推测任务进展瓶颈（如‘in_progress’项对应的实际活动是否匹配）、优先级执行一致性。",
+        "enable_tool_loop": false,
+        "initial_tool_name": "get_daily_stats",
+        "initial_tool_args": {
+          "module": "task_status"
+        },
+        "data_in_thread": "main",
+        "data_in_slice": [
+          0,
+          1
+        ],
+        "data_out_thread": "summary",
+        "data_out": true,
+        "data_out_description": "任务状态原始数据",
+        "node_id": 6,
+        "thread_view_index": 5,
+        "x": 1000,
+        "y": -600
+      },
+      {
+        "node_type": "tool-first",
+        "node_name": "获取横向对比数据",
+        "thread_id": "comparison_node",
+        "task_prompt": "20字内简单回答：分析分类时长与目标投入的环比变化，推测行为模式迁移原因（如工作/学习时长上升可能源于截止日临近，娱乐增加可能反映疲劳补偿），并标注数据局限性（仅限电脑端，不含移动端/纸质/离线活动）。",
+        "enable_tool_loop": false,
+        "initial_tool_name": "get_daily_stats",
+        "initial_tool_args": {
+          "module": "comparison"
+        },
+        "data_in_thread": "main",
+        "data_in_slice": [
+          0,
+          1
+        ],
+        "data_out_thread": "summary",
+        "data_out": true,
+        "data_out_description": "横向对比原始数据",
+        "node_id": 7,
+        "thread_view_index": 6,
+        "x": 1200,
+        "y": -720
+      },
+      {
+        "node_type": "llm-first",
+        "node_name": "生成综合每日总结",
+        "thread_id": "summary",
+        "task_prompt": "基于以下五个维度的原始数据，生成结构化、客观且审慎的每日总结：1. 活跃分布（指出峰值/谷值时段，用'可能''推测'等限定词）；2. 分时段行为（说明各时段主导活动、专注度线索及异常点）；3. 目标投入（评估进度与质量，关联具体活动）；4. 任务状态（分析focus执行情况与todos完成度背后的行为证据）；5. 横向对比（解释变化方向的合理动因，并始终强调'仅反映电脑使用行为，不包含非屏幕活动'这一根本局限性）。严格遵循每日总结要求，不添加未被数据支持的断言。",
+        "enable_tool_loop": false,
+        "data_in_thread": "main",
+        "data_in_slice": [
+          0,
+          1
+        ],
+        "data_out_thread": "main",
+        "data_out": true,
+        "data_out_description": "最终每日总结报告",
+        "node_id": 8,
+        "thread_view_index": 1,
+        "x": 1400,
+        "y": -120
+      }
+    ],
+    "threadId_map_viewId": {
+      "main": 0,
+      "summary": 1,
+      "active_distribution_node": 2,
+      "behavior_stats_node": 3,
+      "target_investment_node": 4,
+      "task_status_node": 5,
+      "comparison_node": 6
+    }
+  },
+  "complete": {
+    "task": "总结今天我做了什么",
+    "nodes": [
+      {
+        "node_type": "llm-first",
+        "node_name": "Main Start",
+        "thread_id": "main",
+        "task_prompt": "Start of main thread",
+        "enable_tool_loop": false,
+        "data_in_thread": "main",
+        "data_in_slice": [
+          0,
+          1
+        ],
+        "data_out_thread": "main",
+        "data_out": false,
+        "data_out_description": "",
+        "node_id": 1,
+        "thread_view_index": 0,
+        "x": 0,
+        "y": 0
+      },
+      {
+        "node_type": "llm-first",
+        "node_name": "空节点，创建线程summary，为了不污染main的context，用来存放每个单独分析的部分的结果",
+        "thread_id": "summary",
+        "task_prompt": "",
+        "enable_tool_loop": false,
+        "data_in_thread": "main",
+        "data_in_slice": [
+          0,
+          1
+        ],
+        "data_out_thread": "main",
+        "data_out": false,
+        "data_out_description": "",
+        "node_id": 2,
+        "thread_view_index": 1,
+        "x": 200,
+        "y": -120
+      },
+      {
+        "node_type": "tool-first",
+        "node_name": "获取活跃分布数据",
+        "thread_id": "active_distribution_node",
+        "task_prompt": "20字内简单回答：分析24小时电脑使用强度分布，识别高峰与低谷时段，并推测可能的作息规律或干扰因素。",
+        "enable_tool_loop": false,
+        "initial_tool_name": "get_daily_stats",
+        "initial_tool_args": {
+          "module": "active_distribution"
+        },
+        "data_in_thread": "main",
+        "data_in_slice": [
+          0,
+          1
+        ],
+        "data_out_thread": "summary",
+        "data_out": true,
+        "data_out_description": "活跃分布原始数据",
+        "node_id": 3,
+        "thread_view_index": 2,
+        "x": 400,
+        "y": -240
+      },
+      {
+        "node_type": "tool-first",
+        "node_name": "获取分时段行为数据",
+        "thread_id": "behavior_stats_node",
+        "task_prompt": "20字内简单回答：解析四个时段的行为分类占比与主要活动记录，推测各时段主导任务类型、专注度水平及潜在时间浪费点。",
+        "enable_tool_loop": false,
+        "initial_tool_name": "get_daily_stats",
+        "initial_tool_args": {
+          "module": "behavior_stats"
+        },
+        "data_in_thread": "main",
+        "data_in_slice": [
+          0,
+          1
+        ],
+        "data_out_thread": "summary",
+        "data_out": true,
+        "data_out_description": "分时段行为原始数据",
+        "node_id": 4,
+        "thread_view_index": 3,
+        "x": 600,
+        "y": -360
+      },
+      {
+        "node_type": "tool-first",
+        "node_name": "获取目标投入数据",
+        "thread_id": "target_investment_node",
+        "task_prompt": "20字内简单回答：提取核心项目实际投入时长，对照预期目标评估完成度；结合行为记录推测目标推进质量（如是否集中于关键子任务）。",
+        "enable_tool_loop": false,
+        "initial_tool_name": "get_daily_stats",
+        "initial_tool_args": {
+          "module": "target_investment"
+        },
+        "data_in_thread": "main",
+        "data_in_slice": [
+          0,
+          1
+        ],
+        "data_out_thread": "summary",
+        "data_out": true,
+        "data_out_description": "目标投入原始数据",
+        "node_id": 5,
+        "thread_view_index": 4,
+        "x": 800,
+        "y": -480
+      },
+      {
+        "node_type": "tool-first",
+        "node_name": "获取任务状态数据",
+        "thread_id": "task_status_node",
+        "task_prompt": "20字内简单回答：解析今日focus事项与todos完成状态，结合活动记录推测任务进展瓶颈（如‘in_progress’项对应的实际活动是否匹配）、优先级执行一致性。",
+        "enable_tool_loop": false,
+        "initial_tool_name": "get_daily_stats",
+        "initial_tool_args": {
+          "module": "task_status"
+        },
+        "data_in_thread": "main",
+        "data_in_slice": [
+          0,
+          1
+        ],
+        "data_out_thread": "summary",
+        "data_out": true,
+        "data_out_description": "任务状态原始数据",
+        "node_id": 6,
+        "thread_view_index": 5,
+        "x": 1000,
+        "y": -600
+      },
+      {
+        "node_type": "tool-first",
+        "node_name": "获取横向对比数据",
+        "thread_id": "comparison_node",
+        "task_prompt": "20字内简单回答：分析分类时长与目标投入的环比变化，推测行为模式迁移原因（如工作/学习时长上升可能源于截止日临近，娱乐增加可能反映疲劳补偿），并标注数据局限性（仅限电脑端，不含移动端/纸质/离线活动）。",
+        "enable_tool_loop": false,
+        "initial_tool_name": "get_daily_stats",
+        "initial_tool_args": {
+          "module": "comparison"
+        },
+        "data_in_thread": "main",
+        "data_in_slice": [
+          0,
+          1
+        ],
+        "data_out_thread": "summary",
+        "data_out": true,
+        "data_out_description": "横向对比原始数据",
+        "node_id": 7,
+        "thread_view_index": 6,
+        "x": 1200,
+        "y": -720
+      },
+      {
+        "node_type": "llm-first",
+        "node_name": "生成综合每日总结",
+        "thread_id": "summary",
+        "task_prompt": "基于以下五个维度的原始数据，生成结构化、客观且审慎的每日总结：1. 活跃分布（指出峰值/谷值时段，用'可能''推测'等限定词）；2. 分时段行为（说明各时段主导活动、专注度线索及异常点）；3. 目标投入（评估进度与质量，关联具体活动）；4. 任务状态（分析focus执行情况与todos完成度背后的行为证据）；5. 横向对比（解释变化方向的合理动因，并始终强调'仅反映电脑使用行为，不包含非屏幕活动'这一根本局限性）。严格遵循每日总结要求，不添加未被数据支持的断言。",
+        "enable_tool_loop": false,
+        "data_in_thread": "main",
+        "data_in_slice": [
+          0,
+          1
+        ],
+        "data_out_thread": "main",
+        "data_out": true,
+        "data_out_description": "最终每日总结报告",
+        "node_id": 8,
+        "thread_view_index": 1,
+        "x": 1400,
+        "y": -120
+      }
+    ],
+    "threadId_map_viewId": {
+      "main": 0,
+      "summary": 1,
+      "active_distribution_node": 2,
+      "behavior_stats_node": 3,
+      "target_investment_node": 4,
+      "task_status_node": 5,
+      "comparison_node": 6
+    }
+  }
+}
