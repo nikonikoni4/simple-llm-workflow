@@ -521,16 +521,12 @@ class NodeGraphView(QGraphicsView):
         self.drag_temp_line = None
         
         # 线程视图索引管理
-        self.thread_view_indices = {}  # thread_id -> index (int)
+        self.threadId_map_viewId = {}  # thread_id -> index (int)
         
         # === 多 Pattern 数据存储 ===
         self.all_plans: Dict[str, GuiExecutionPlan] = {}  # pattern_name -> GuiExecutionPlan
         self.current_pattern: str = ""  # 当前显示的 pattern 名称
         self.current_file_path: Optional[str] = None  # 当前加载的文件路径
-        
-        
-        
-
         
         # 不再硬编码初始节点，由 load_from_file 或手动添加
         # 将视图中心对准左下角区域
@@ -817,11 +813,11 @@ class NodeGraphView(QGraphicsView):
                 return
             elif item.up_thread_rect.contains(local_pos):
                 # 线程上移
-                self.swap_threads(item, -1)
+                self.swap_threads(item, +1)
                 return
             elif item.down_thread_rect.contains(local_pos):
                 # 线程下移
-                self.swap_threads(item, 1)
+                self.swap_threads(item, -1)
                 return
             elif item.output_anchor_rect.contains(local_pos):
                 # 开始拖拽连接线
@@ -935,11 +931,11 @@ class NodeGraphView(QGraphicsView):
         new_thread_id = f"branch_{self.next_node_id}"
 
         # 使用下一个可用索引
-        current_indices = self.thread_view_indices.values()
+        current_indices = self.threadId_map_viewId.values()
         next_idx = max(current_indices) + 1 if current_indices else 1 # 0 是 main 线程
         
         # 注册新线程
-        self.thread_view_indices[new_thread_id] = next_idx
+        self.threadId_map_viewId[new_thread_id] = next_idx
         
         node_id = self.next_node_id
 
@@ -980,18 +976,34 @@ class NodeGraphView(QGraphicsView):
     def delete_thread(self, item):
         """
         删除该节点所属的整个线程。
-        应用特定的偏移逻辑: '其他小于其线程坐标 ID 的 ID + 1'
+        
+        规则：
+        1. main线程不能被删除
+        2. 删除后，所有 thread_view_index > deleted_idx 的线程索引 -1
         """
         thread_id = item.node_data.thread_id
+        
+        # 规则1: 检查是否是 main 线程
         if thread_id == "main":
-            print("Cannot delete main thread yet")
+            print("Cannot delete main thread")
             return
             
-        deleted_idx = self.thread_view_indices.get(thread_id)
-        if deleted_idx is None:
+        # 1. 获取当前删除线程的 viewId
+        del_viewId = self.threadId_map_viewId.get(thread_id)
+        if del_viewId is None:
+            print(f"Thread {thread_id} not found in threadId_map_viewId")
             return
-            
-        # 1. 移除该线程的所有节点
+        
+        # 2. 删除 threadId_map_viewId 中的 thread_id
+        del self.threadId_map_viewId[thread_id]
+        
+        # 3. 遍历 threadId_map_viewId，更新索引
+        # 所有 viewId > del_viewId 的线程，其 viewId -= 1
+        for tid in list(self.threadId_map_viewId.keys()):
+            if self.threadId_map_viewId[tid] > del_viewId:
+                self.threadId_map_viewId[tid] -= 1
+        
+        # 4. 删除所有节点中 thread_id 为 thread_id 的节点
         nodes_to_remove = []
         for i in self.scene.items():
             if isinstance(i, NodeItem) and i.node_data.thread_id == thread_id:
@@ -999,27 +1011,20 @@ class NodeGraphView(QGraphicsView):
         
         for node in nodes_to_remove:
             self.scene.removeItem(node)
-            
-        # 2. 更新索引
-        # 规则: "删除该线程的所有 ID，其他小于其线程坐标 ID 的 ID + 1"
-        del self.thread_view_indices[thread_id]
         
-        for tid, idx in self.thread_view_indices.items():
-            if idx < deleted_idx:
-                self.thread_view_indices[tid] = idx + 1
-        
-        # 3. 更新所有剩余节点的位置
+        # 5. 更新剩余节点的 thread_view_index
         remaining_nodes = [i for i in self.scene.items() if isinstance(i, NodeItem)]
         for node in remaining_nodes:
-            tid = node.node_data.thread_id
-            if tid in self.thread_view_indices:
-                new_idx = self.thread_view_indices[tid]
+            node_thread_id = node.node_data.thread_id
+            if node_thread_id in self.threadId_map_viewId:
+                new_idx = self.threadId_map_viewId[node_thread_id]
                 node.node_data.thread_view_index = new_idx  # 这会自动触发 y 坐标计算
-                # [已注释 - 坐标由 schemas.py 自动计算]
-                # node.setPos(node.x(), self.main_y_baseline - (new_idx * 120))
                 node.setPos(node.node_data.x, node.node_data.y)  # 使用自动计算的坐标
         
+        # 更新连接线
         self.update_connections()
+        
+        print(f"Deleted thread: {thread_id} (viewId: {del_viewId})")
 
     def swap_nodes(self, item, direction):
         """
@@ -1089,12 +1094,27 @@ class NodeGraphView(QGraphicsView):
         """
         与相邻线程交换线程位置。
         
+        规则：
+        1. main线程位置不能交换
+        2. 按键按下时首先判断是否是ID = 1，若是则忽略此次
+        
         参数:
             item: 线程应被移动的 NodeItem
             direction: -1 代表向上 (线程上移), 1 代表向下 (线程下移)
+        
+        注意：由于Qt坐标系向下为正，但thread_view_index越大表示越靠上，
+        所以需要反转direction的符号才能正确移动
         """
+        # 规则1: 检查是否是 ID = 1 (main 线程)
+        if item.node_data.thread_id == "main":
+            print(f"Cannot swap thread: Node ID 1 (main thread) cannot be moved")
+            return
+        
         current_thread_id = item.node_data.thread_id
         current_thread_index = item.node_data.thread_view_index
+        
+        # 反转方向：点击向下(direction=1)时，需要 index-1（视觉向下）
+        # 点击向上(direction=-1)时，需要 index+1（视觉向上）
         target_thread_index = current_thread_index + direction
         
         # 验证目标索引
@@ -1104,7 +1124,7 @@ class NodeGraphView(QGraphicsView):
         
         # 查找目标线程 (具有 target_thread_index 的线程)
         target_thread_id = None
-        for tid, idx in self.thread_view_indices.items():
+        for tid, idx in self.threadId_map_viewId.items():
             if idx == target_thread_index:
                 target_thread_id = tid
                 break
@@ -1112,35 +1132,27 @@ class NodeGraphView(QGraphicsView):
         if not target_thread_id:
             print(f"Cannot move thread: no thread found with index {target_thread_index}")
             return
+        if target_thread_id == "main":
+            print(f"Cannot swap thread: Node ID 1 (main thread) cannot be moved")
+            return
+        # 执行 switch_thread_view_index 逻辑
+        # 1. 修改 threadId_map_viewId
+        self.threadId_map_viewId[current_thread_id] = target_thread_index
+        self.threadId_map_viewId[target_thread_id] = current_thread_index
         
-        # 交换 thread_view_indices
-        self.thread_view_indices[current_thread_id] = target_thread_index
-        self.thread_view_indices[target_thread_id] = current_thread_index
-        
-        # 获取所有节点
+        # 2. 修改所有节点的 thread_view_index
         nodes = [i for i in self.scene.items() if isinstance(i, NodeItem)]
-        
-        # 更新两个线程中的所有节点
         for node in nodes:
-            node_thread_id = node.node_data.thread_id
-            if node_thread_id == current_thread_id:
-                # 为当前线程中的所有节点更新 thread_view_index (这会自动触发 y 坐标计算)
+            if node.node_data.thread_id == current_thread_id:
                 node.node_data.thread_view_index = target_thread_index
-                # [已注释 - 坐标由 schemas.py 自动计算]
-                # new_y = self.main_y_baseline - (target_thread_index * self.thread_gap_y)
-                # node.setPos(node.x(), new_y)
-                node.setPos(node.node_data.x, node.node_data.y)  # 使用自动计算的坐标
+                node.setPos(node.node_data.x, node.node_data.y)
                 node.update()
-            elif node_thread_id == target_thread_id:
-                # 为目标线程中的所有节点更新 thread_view_index (这会自动触发 y 坐标计算)
+            elif node.node_data.thread_id == target_thread_id:
                 node.node_data.thread_view_index = current_thread_index
-                # [已注释 - 坐标由 schemas.py 自动计算]
-                # new_y = self.main_y_baseline - (current_thread_index * self.thread_gap_y)
-                # node.setPos(node.x(), new_y)
-                node.setPos(node.node_data.x, node.node_data.y)  # 使用自动计算的坐标
+                node.setPos(node.node_data.x, node.node_data.y)
                 node.update()
         
-        # 更新所有连接线轮廓
+        # 更新所有连接线
         self.update_connections()
         
         print(f"Swapped threads: {current_thread_id} (index {current_thread_index}) ↔ {target_thread_id} (index {target_thread_index})")
@@ -1148,8 +1160,8 @@ class NodeGraphView(QGraphicsView):
     def add_main_node(self):
         node_id = self.next_node_id
         
-        if "main" not in self.thread_view_indices:
-             self.thread_view_indices["main"] = 0
+        if "main" not in self.threadId_map_viewId:
+             self.threadId_map_viewId["main"] = 0
              
         node_data = NodeProperties(**{
             "node_name": "New Node",
@@ -1157,7 +1169,7 @@ class NodeGraphView(QGraphicsView):
             "thread_id": "main",
             "task_prompt": "",
             "node_id": node_id, 
-            "thread_view_index": self.thread_view_indices["main"],
+            "thread_view_index": self.threadId_map_viewId["main"],
         })
         self.add_node(node_data)
     # ==================== 多 Pattern 数据管理 ====================
@@ -1222,8 +1234,8 @@ class NodeGraphView(QGraphicsView):
         if self.current_pattern and self.current_pattern in self.all_plans:
             nodes = self.get_all_nodes_data()
             self.all_plans[self.current_pattern].nodes = nodes
-            # 同步 thread_view_indices
-            self.all_plans[self.current_pattern].thread_view_indices = self.thread_view_indices.copy()
+            # 同步 threadId_map_viewId
+            self.all_plans[self.current_pattern].threadId_map_viewId = self.threadId_map_viewId.copy()
     
     def _load_plan_to_scene(self, plan: GuiExecutionPlan):
         """
@@ -1237,8 +1249,8 @@ class NodeGraphView(QGraphicsView):
         # 重置颜色映射
         self.thread_color_map.clear()
         
-        # 同步 thread_view_indices
-        self.thread_view_indices = plan.thread_view_indices.copy()
+        # 同步 threadId_map_viewId
+        self.threadId_map_viewId = plan.threadId_map_viewId.copy()
         
         # 创建节点
         for node in plan.nodes:
