@@ -2,7 +2,8 @@ import sys
 import json
 import requests
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QVBoxLayout, QWidget, QHBoxLayout, 
-                             QAction, QFileDialog, QSplitter, QLabel, QLineEdit, QComboBox, QMessageBox)
+                             QAction, QFileDialog, QSplitter, QLabel, QLineEdit, QComboBox, 
+                             QMessageBox, QPushButton, QInputDialog)
 from PyQt5.QtCore import Qt, QThread, pyqtSignal
 
 # 本地导入
@@ -58,9 +59,35 @@ class MainWindow(QMainWindow):
         pattern_layout = QHBoxLayout()
         pattern_label = QLabel("Pattern:")
         self.pattern_combo = QComboBox()
+        self.pattern_combo.setEditable(True)  # 允许编辑以重命名 pattern
+        self.pattern_combo.setInsertPolicy(QComboBox.NoInsert)  # 不自动插入新项
         # 初始为空，加载文件后会动态填充
+        self._editing_pattern_name = None  # 用于跟踪编辑前的名称
+        
+        # 添加新 Pattern 的按钮
+        self.add_pattern_btn = QPushButton("+")
+        self.add_pattern_btn.setFixedSize(28, 28)
+        self.add_pattern_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #2196F3;
+                color: white;
+                border-radius: 14px;
+                font-weight: bold;
+                font-size: 20px;
+                padding-bottom: 3px;
+            }
+            QPushButton:hover {
+                background-color: #42A5F5;
+            }
+            QPushButton:pressed {
+                background-color: #1976D2;
+            }
+        """)
+        self.add_pattern_btn.clicked.connect(self.on_add_pattern_clicked)
+        
         pattern_layout.addWidget(pattern_label)
         pattern_layout.addWidget(self.pattern_combo)
+        pattern_layout.addWidget(self.add_pattern_btn)
         
         left_panel_layout.addLayout(pattern_layout)
 
@@ -112,6 +139,9 @@ class MainWindow(QMainWindow):
         self.graph_view.currentPatternChanged.connect(self.on_current_pattern_changed)
         self.pattern_combo.currentTextChanged.connect(self.on_pattern_combo_changed)
         
+        # Pattern 名称编辑信号
+        self.pattern_combo.lineEdit().editingFinished.connect(self.on_pattern_name_edited)
+        
         # Task 输入变化时同步到 Graph 并更新执行计划
         self.task_input.textChanged.connect(self.on_task_changed)
         self.task_input.textChanged.connect(self._update_execution_plan)
@@ -128,6 +158,9 @@ class MainWindow(QMainWindow):
 
         # 初始状态
         self._switching_pattern = False  # 防止循环触发
+        
+        # 自动创建默认的 "custom" pattern
+        self.graph_view.create_new_pattern("custom")
 
 
     def _update_execution_plan(self):
@@ -253,7 +286,12 @@ class MainWindow(QMainWindow):
         self.pattern_combo.clear()
         self.pattern_combo.addItems(patterns)
         if patterns:
-            self.pattern_combo.setCurrentText(patterns[0])
+            # 优先选中当前正在显示的 pattern，否则选中第一个
+            current = self.graph_view.current_pattern
+            if current and current in patterns:
+                self.pattern_combo.setCurrentText(current)
+            else:
+                self.pattern_combo.setCurrentText(patterns[0])
             # 同步 task 输入框
             self.task_input.setText(self.graph_view.get_current_task())
         self._switching_pattern = False
@@ -269,11 +307,73 @@ class MainWindow(QMainWindow):
         """当用户从 ComboBox 选择不同 pattern 时"""
         if self._switching_pattern or not pattern_name:
             return
-        self.graph_view.switch_pattern(pattern_name)
+        
+        # 记录当前选中的 pattern 名称，用于后续重命名判断
+        self._editing_pattern_name = self.graph_view.current_pattern
+        
+        # 检查是否是选择了一个已存在的 pattern
+        if pattern_name in self.graph_view.all_plans:
+            self.graph_view.switch_pattern(pattern_name)
+    
+    def on_pattern_name_edited(self):
+        """当用户编辑完 pattern 名称后（按下回车或失去焦点）"""
+        if self._switching_pattern:
+            return
+            
+        new_name = self.pattern_combo.currentText().strip()
+        old_name = self.graph_view.current_pattern
+        
+        # 如果名称没有变化或为空，恢复原名称
+        if not new_name or new_name == old_name:
+            if old_name:
+                self._switching_pattern = True
+                self.pattern_combo.setCurrentText(old_name)
+                self._switching_pattern = False
+            return
+        
+        # 尝试重命名
+        success = self.graph_view.rename_pattern(old_name, new_name)
+        if not success:
+            # 重命名失败，恢复原名称
+            self._switching_pattern = True
+            self.pattern_combo.setCurrentText(old_name)
+            self._switching_pattern = False
+            QMessageBox.warning(
+                self, 
+                "Error", 
+                f"Failed to rename pattern. '{new_name}' may already exist."
+            )
     
     def on_task_changed(self, text: str):
         """当 task 输入框内容变化时，同步到 Graph"""
         self.graph_view.update_current_task(text)
+    
+    def on_add_pattern_clicked(self):
+        """点击添加 pattern 按钮时弹出对话框"""
+        pattern_name, ok = QInputDialog.getText(
+            self, 
+            "Create New Pattern", 
+            "Enter pattern name:",
+            QLineEdit.Normal,
+            ""
+        )
+        
+        if ok and pattern_name.strip():
+            # 调用 graph_view 创建新 pattern
+            success = self.graph_view.create_new_pattern(pattern_name.strip())
+            if success:
+                # 更新 ComboBox 选中项
+                self._switching_pattern = True
+                # ComboBox 会被 patternListChanged 信号自动更新
+                # 这里只需要设置当前选中项
+                self.pattern_combo.setCurrentText(pattern_name.strip())
+                self._switching_pattern = False
+            else:
+                QMessageBox.warning(
+                    self, 
+                    "Error", 
+                    f"Failed to create pattern '{pattern_name}'. It may already exist."
+                )
 
     def load_plans(self):
         """加载 JSON 计划文件"""

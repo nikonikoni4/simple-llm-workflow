@@ -1349,5 +1349,100 @@ class NodeGraphView(QGraphicsView):
         if self.current_pattern and self.current_pattern in self.all_plans:
             return self.all_plans[self.current_pattern].task or ""
         return ""
+    
+    def create_new_pattern(self, pattern_name: str) -> bool:
+        """
+        创建一个新的 pattern，包含一个 main 线程的初始节点
+        
+        参数:
+            pattern_name: 新 pattern 的名称
+            
+        返回:
+            是否创建成功
+        """
+        # 检查 pattern 名称是否已存在
+        if pattern_name in self.all_plans:
+            print(f"Error: Pattern '{pattern_name}' already exists")
+            return False
+        
+        if not pattern_name.strip():
+            print("Error: Pattern name cannot be empty")
+            return False
+        
+        # 保存当前 pattern 的修改
+        self._save_current_to_plans()
+        
+        # 创建一个包含 main 线程节点的初始 plan
+        initial_node = NodeProperties(
+            node_id=1,
+            node_name="Start",
+            node_type="llm-first",
+            thread_id="main",
+            thread_view_index=0,
+            task_prompt="",
+        )
+        
+        new_plan = GuiExecutionPlan(
+            task="",
+            nodes=[initial_node],
+            threadId_map_viewId={"main": 0}
+        )
+        
+        # 添加到 all_plans
+        self.all_plans[pattern_name] = new_plan
+        
+        # 切换到新 pattern
+        self.current_pattern = pattern_name
+        self._load_plan_to_scene(new_plan)
+        
+        # 发送信号通知 pattern 列表已更新
+        patterns = list(self.all_plans.keys())
+        self.patternListChanged.emit(patterns)
+        
+        # 发送当前 pattern 变化信号
+        self.currentPatternChanged.emit(pattern_name, new_plan)
+        
+        print(f"Created new pattern: {pattern_name}")
+        return True
+    
+    def rename_pattern(self, old_name: str, new_name: str) -> bool:
+        """
+        重命名一个 pattern
+        
+        参数:
+            old_name: 原 pattern 名称
+            new_name: 新 pattern 名称
+            
+        返回:
+            是否重命名成功
+        """
+        # 检查原名称是否存在
+        if old_name not in self.all_plans:
+            print(f"Error: Pattern '{old_name}' not found")
+            return False
+        
+        # 检查新名称是否已存在
+        if new_name in self.all_plans:
+            print(f"Error: Pattern '{new_name}' already exists")
+            return False
+        
+        if not new_name.strip():
+            print("Error: New pattern name cannot be empty")
+            return False
+        
+        # 执行重命名
+        plan = self.all_plans.pop(old_name)
+        self.all_plans[new_name] = plan
+        
+        # 如果重命名的是当前 pattern，更新 current_pattern
+        if self.current_pattern == old_name:
+            self.current_pattern = new_name
+        
+        # 发送信号通知 pattern 列表已更新
+        patterns = list(self.all_plans.keys())
+        self.patternListChanged.emit(patterns)
+        
+        print(f"Renamed pattern: '{old_name}' -> '{new_name}'")
+        return True
 
 
