@@ -20,12 +20,64 @@
 
 ## 快速开始
 
-1. 安装依赖
-```bash
-pip install -r requirements.txt
+您可以根据需要选择 **源码运行** 或 **使用 Release 版本**。
+
+---
+
+### 方案 A：使用 Release 版本 (推荐)
+
+如果您想直接使用现成的软件，可以按照以下步骤操作：
+
+1. **下载 Release 包**：从 [Releases](https://github.com/nikonikoni4/simple-llm-playground/releases) 页面下载最新的 `.zip` 文件并解压。
+2. **配置工具与模型**：在解压后的目录下找到 `tools_config.py` 文件。
+3. **运行软件**：双击运行 `simple-llm-playground.exe`。
+
+#### `tools_config.py` 配置说明
+
+在 Release 版本中，所有的自定义逻辑（工具注册、模型配置）均通过程序同级目录下的 `tools_config.py` 实现。
+
+- **配置模型**：您可以定义 `LLM_CONFIG` 字典来指定 API Key 和模型。
+- **注册工具**：将工具函数（或从项目中导入的函数）添加到 `TOOLS` 字典中。
+
+```python
+# tools_config.py 示例内容
+
+from langchain_core.tools import tool
+
+# 1. 定义你的工具
+@tool
+def my_custom_tool(query: str):
+    """描述你的工具用途"""
+    return f"结果: {query}"
+
+# 2. 导出到工具列表 (必须)
+TOOLS = {
+    "my_tool_name": my_custom_tool,
+}
+
+# 3. 自定义模型配置 (可选)
+LLM_CONFIG = {
+    "model": "gpt-4o",
+    "api_key": "your_api_key_here",
+    "base_url": "https://api.openai.com/v1", # 如果使用代理请修改
+}
 ```
 
-2. 配置模型(在main.py中配置)
+---
+
+### 方案 B：从源码运行
+
+如果您需要进行二次开发或调试，请参考以下步骤：
+
+1. **安装依赖**
+
+```bash
+pip install . 
+# 或开发模式安装
+pip install -e . 
+```
+
+2. **配置模型** (在 `main.py` 中配置)
 
 ```python
 # main.py
@@ -34,9 +86,9 @@ model = "gpt-4o"
 llm_factory = create_llm_factory(model,api_key,chat_model=ChatOpenAI)
 ```
 
-3. 配置工具
+3. **配置工具**
 
-在main.py中导入工具函数（基于langchain的@tool装饰器的工具函数，或在导入后增加@tool装饰器包装函数），快速接入本地数据或业务逻辑。
+在 `main.py` 中导入工具函数（基于langchain的@tool装饰器的工具函数，或在导入后增加@tool装饰器包装函数），快速接入本地数据或业务逻辑。
 
 ```python
 from simple_llm_playground.server.executor_manager import executor_manager
@@ -44,7 +96,8 @@ from your_path import ( tools )
 
 executor_manager.register_tool("your_tool_name", your_tool)
 ```
-4. 终端运行
+
+4. **终端运行**
 
 ```bash
 .\run.bat
