@@ -166,7 +166,7 @@ exe = EXE(
     entitlements_file=None,
     
     # 图标（如果有的话）
-    icon='assets\icon.ico',
+    icon='asset\icon.ico',
 )
 
 coll = COLLECT(
