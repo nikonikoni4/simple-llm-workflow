@@ -153,7 +153,7 @@ exe = EXE(
     a.scripts,
     [],  # 空列表 = 非onefile模式，生成文件夹
     exclude_binaries=True,  # 二进制文件放在文件夹里
-    name='simple-llm-playground',
+    name='simple-llm-workflow',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,  # Windows上不strip
@@ -176,5 +176,5 @@ coll = COLLECT(
     strip=False,
     upx=True,
     upx_exclude=[],
-    name='simple-llm-playground',
+    name='simple-llm-workflow',
 )

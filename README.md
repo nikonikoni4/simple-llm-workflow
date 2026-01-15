@@ -1,20 +1,20 @@
-# Simple LLM Playground
+# Simple LLM Workflow
 
 一个基于 `llm-linear-executor` 的 Qt 可视化界面，旨在通过图形化操作快速生成、调试和验证 LLM Workflow。
 
-<p align="center">图 ：simple-llm-playground界面</p>
+<p align="center">图 ：simple-llm-workflow界面</p>
 
 ![alt text](/asset/image.png)
 
 
-## Simple LLM Playground 能做什么？
+## Simple LLM Workflow 能做什么？
 
 
 - **可视化编排**：通过直观的节点连接生成 Workflow，支持 LLM 节点与 Tool 节点的混合编排。
 - **实时调试**：内置 Executor 引擎，可直接运行设计好的流程，实时查看每一步的输出结果。
 - **自定义工具**：支持通过简单的装饰器将 Python 函数注册为 Tool，通过在main.py中导入工具函数（基于langchain的@tool装饰器的工具函数，或在导入后增加@tool装饰器包装函数），快速接入本地数据或业务逻辑。
 
-## Simple LLM Playground 有什么局限性？
+## Simple LLM Workflow 有什么局限性？
 
 当前只有两种节点llm-first和tool-first，缺少router节点，有些情况下只能多创建一条线程，来实现。（在后续更新中会思考解决这个问题）
 
@@ -28,9 +28,9 @@
 
 如果您想直接使用现成的软件，可以按照以下步骤操作：
 
-1. **下载 Release 包**：从 [Releases](https://github.com/nikonikoni4/simple-llm-playground/releases) 页面下载最新的 `.zip` 文件并解压。
+1. **下载 Release 包**：从 [Releases](https://github.com/nikonikoni4/simple-llm-workflow/releases) 页面下载最新的 `.zip` 文件并解压。
 2. **配置工具与模型**：在解压后的目录下找到 `tools_config.py` 文件。
-3. **运行软件**：双击运行 `simple-llm-playground.exe`。
+3. **运行软件**：双击运行 `simple-llm-workflow.exe`。
 
 #### `tools_config.py` 配置说明
 

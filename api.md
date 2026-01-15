@@ -1,6 +1,6 @@
 # 前后端 API 交互文档
 
-本文档说明了 Simple LLM Playground 中前端（Qt/Python Client）与后端（FastAPI Server）之间的交互机制。
+本文档说明了 Simple LLM Workflow 中前端（Qt/Python Client）与后端（FastAPI Server）之间的交互机制。
 
 ## 1. 概述
 

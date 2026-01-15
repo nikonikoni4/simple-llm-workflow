@@ -2,7 +2,7 @@
 setlocal
 
 echo ============================================================
-echo   Simple LLM Playground - Build Script
+echo   Simple LLM Workflow - Build Script
 echo ============================================================
 echo.
 
@@ -31,12 +31,12 @@ if errorlevel 1 (
     echo   BUILD FAILED!
 ) else (
     echo   BUILD SUCCESS!
-    echo   Output: dist\simple-llm-playground\
+    echo   Output: dist\simple-llm-workflow\
     echo.
     echo   Usage:
-    echo   1. Copy the entire 'dist\simple-llm-playground' folder
+    echo   1. Copy the entire 'dist\simple-llm-workflow' folder
     echo   2. Create 'tools_config.py' in the same folder
-    echo   3. Run 'simple-llm-playground.exe'
+    echo   3. Run 'simple-llm-workflow.exe'
 )
 echo ============================================================
 echo.

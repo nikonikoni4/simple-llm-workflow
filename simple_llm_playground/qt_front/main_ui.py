@@ -22,7 +22,7 @@ from simple_llm_playground.qt_front.execution_panel import ExecutionControlPanel
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Simple LLM Playground")
+        self.setWindowTitle("Simple LLM Workflow")
         self.resize(1600, 1000)
         
         # 中心组件

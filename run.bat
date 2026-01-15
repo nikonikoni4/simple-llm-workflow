@@ -16,7 +16,7 @@ start "Simple-LLM-UI" cmd /k "python -m simple_llm_playground.qt_front.main_ui"
  
 echo. 
 echo ======================================================
-echo  Simple LLM Playground Running
+echo  Simple LLM Workflow Running
 echo ======================================================
 echo  [backend] Backend API (port 8001)
 echo  [frontend] Debugger UI (PyQt5)
