@@ -22,24 +22,15 @@
  
 ### 1. 安装
 
-首先克隆仓库并安装依赖。强烈建议使用虚拟环境，以便你可以自由安装和管理你的 Tool 所需的依赖库。
-
 ```bash
 # 1. 克隆仓库
 git clone https://github.com/nikonikoni4/simple-llm-workflow.git
 cd simple-llm-workflow
 
-# 2. 创建并激活虚拟环境 (推荐)
-python -m venv .venv
-# Windows:
-.venv\Scripts\activate
-# Linux/Mac:
-# source .venv/bin/activate
-
-# 3. 安装项目 (编辑模式，方便随时修改代码)
+# 2. 安装依赖
 pip install -e .
 ```
-  
+
 ### 2. 运行与配置 
 
 你可以直接通过 Python 模块启动应用，程序会自动在当前目录下查找或创建配置文件。
