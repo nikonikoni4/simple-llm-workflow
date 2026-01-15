@@ -10,7 +10,7 @@ from simple_llm_playground.schemas import (
     InitExecutorRequest, InitExecutorResponse,
     StepExecutorRequest, StepExecutorResponse,
     ExecutorStatusResponse, ExecutionResultResponse,
-    NodeContext, NodeContextResponse,
+    NodeContextResponse,
     HealthCheckResponse, ToolInfo, ToolListResponse,
     TerminateExecutorResponse, ListExecutorsResponse, ExecutorInfo
 )

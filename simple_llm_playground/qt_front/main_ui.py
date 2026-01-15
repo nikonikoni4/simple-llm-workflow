@@ -1,10 +1,8 @@
 import sys
-import json
-import requests
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QVBoxLayout, QWidget, QHBoxLayout, 
                              QAction, QFileDialog, QSplitter, QLabel, QLineEdit, QComboBox, 
                              QMessageBox, QPushButton, QInputDialog)
-from PyQt5.QtCore import Qt, QThread, pyqtSignal
+from PyQt5.QtCore import Qt
 
 # 本地导入
 from simple_llm_playground.qt_front.utils import DARK_STYLESHEET

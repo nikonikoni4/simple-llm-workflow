@@ -11,14 +11,13 @@ import os
 #     sys.path.insert(0, parent_dir)
 
 from PyQt5.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, 
-    QLineEdit, QTextEdit, QGroupBox, QProgressBar, QSpinBox,
-    QDoubleSpinBox, QCheckBox, QFormLayout, QMessageBox, QComboBox
+    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QGroupBox, QProgressBar,
+     QMessageBox
 )
-from PyQt5.QtCore import pyqtSignal, Qt
-from PyQt5.QtGui import QFont
+from PyQt5.QtCore import pyqtSignal
 
-from simple_llm_playground.qt_front.api_client import ExecutorController, APIError
+
+from simple_llm_playground.qt_front.api_client import ExecutorController
 
 
 class ExecutionControlPanel(QWidget):

@@ -1,12 +1,11 @@
 from PyQt5.QtWidgets import QGraphicsView, QGraphicsScene, QGraphicsItem, QGraphicsLineItem, QGraphicsPathItem, QPushButton, QGraphicsDropShadowEffect, QMenu
 from PyQt5.QtCore import Qt, QRectF, QPointF, pyqtSignal
-from PyQt5.QtGui import QPen, QBrush, QColor, QWheelEvent, QPainter, QPainterPath, QFont
-import random
+from PyQt5.QtGui import QPen, QColor, QWheelEvent, QPainter, QPainterPath, QFont
 import json
 from simple_llm_playground.qt_front.utils import NODE_COLORS, THREAD_COLORS
 from simple_llm_playground.schemas import (
     NodeProperties, 
-    GuiExecutionPlan,
+    GuiExecutionPlan, 
     NODE_GAP_X,
     THREAD_GAP_Y,
     MAIN_Y_BASELINE,

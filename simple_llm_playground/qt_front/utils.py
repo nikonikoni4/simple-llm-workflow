@@ -1,4 +1,4 @@
-from PyQt5.QtWidgets import QComboBox, QWidget, QVBoxLayout, QPushButton, QSizePolicy
+from PyQt5.QtWidgets import QComboBox, QWidget, QVBoxLayout, QPushButton
 from PyQt5.QtGui import QColor
 
 # --- 深色主题样式表 ---

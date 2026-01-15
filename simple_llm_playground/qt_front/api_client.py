@@ -14,7 +14,7 @@ from simple_llm_playground.schemas import (
     ExecutorStatusResponse, ExecutionResultResponse,
     HealthCheckResponse, ToolListResponse,
     TerminateExecutorResponse, ListExecutorsResponse,
-    NodeContextResponse, ExecutorMessagesResponse
+    NodeContextResponse
 )
 
 
