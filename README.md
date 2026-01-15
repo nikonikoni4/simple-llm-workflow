@@ -19,89 +19,69 @@
 当前只有两种节点llm-first和tool-first，缺少router节点，有些情况下只能多创建一条线程，来实现。（在后续更新中会思考解决这个问题）
 
 ## 快速开始
+ 
+### 1. 安装
 
-您可以根据需要选择 **源码运行** 或 **使用 Release 版本**。
+首先克隆仓库并安装依赖。强烈建议使用虚拟环境，以便你可以自由安装和管理你的 Tool 所需的依赖库。
 
----
+```bash
+# 1. 克隆仓库
+git clone https://github.com/nikonikoni4/simple-llm-workflow.git
+cd simple-llm-workflow
 
-### 方案 A：使用 Release 版本 (推荐)
+# 2. 创建并激活虚拟环境 (推荐)
+python -m venv .venv
+# Windows:
+.venv\Scripts\activate
+# Linux/Mac:
+# source .venv/bin/activate
 
-如果您想直接使用现成的软件，可以按照以下步骤操作：
+# 3. 安装项目 (编辑模式，方便随时修改代码)
+pip install -e .
+```
+  
+### 2. 运行与配置 
 
-1. **下载 Release 包**：从 [Releases](https://github.com/nikonikoni4/simple-llm-workflow/releases) 页面下载最新的 `.zip` 文件并解压。
-2. **配置工具与模型**：在解压后的目录下找到 `tools_config.py` 文件。
-3. **运行软件**：双击运行 `simple-llm-workflow.exe`。
+你可以直接通过 Python 模块启动应用，程序会自动在当前目录下查找或创建配置文件。
+
+```bash
+# 启动应用
+python -m simple_llm_workflow.app
+```
+
+**首次运行**时，程序会自动在当前目录下生成一个 `tools_config.py` 模板文件。
 
 #### `tools_config.py` 配置说明
 
-在 Release 版本中，所有的自定义逻辑（工具注册、模型配置）均通过程序同级目录下的 `tools_config.py` 实现。
-
-- **配置模型**：您可以定义 `LLM_CONFIG` 字典来指定 API Key 和模型。
-- **注册工具**：将工具函数（或从项目中导入的函数）添加到 `TOOLS` 字典中。
+你可以编辑 `tools_config.py` 来定义你的 LLM 模型和自定义工具（Tools）。由于应用运行在你的 Python 环境中，你可以随意 `import` 任何你已安装的第三方库（如 `pandas`, `numpy`, `requests` 等）。
 
 ```python
-# tools_config.py 示例内容
+# tools_config.py 示例
 
 from langchain_core.tools import tool
+import requests
 
-# 1. 定义你的工具
+# 1. 定义你的工具 (可以使用任意 Python 库)
 @tool
-def my_custom_tool(query: str):
-    """描述你的工具用途"""
-    return f"结果: {query}"
+def get_weather(city: str):
+    """查询天气 - 这是一个演示工具"""
+    # 这里可以调用你的业务逻辑或第三方API
+    return f"{city} 的天气是晴天，25度。"
 
 # 2. 导出到工具列表 (必须)
 TOOLS = {
-    "my_tool_name": my_custom_tool,
+    "get_weather": get_weather,
 }
 
 # 3. 自定义模型配置 (可选)
 LLM_CONFIG = {
     "model": "gpt-4o",
     "api_key": "your_api_key_here",
-    "base_url": "https://api.openai.com/v1", # 如果使用代理请修改
+    "base_url": "https://api.openai.com/v1", 
 }
 ```
 
----
-
-### 方案 B：从源码运行
-
-如果您需要进行二次开发或调试，请参考以下步骤：
-
-1. **安装依赖**
-
-```bash
-pip install . 
-# 或开发模式安装
-pip install -e . 
-```
-
-2. **配置模型** (在 `main.py` 中配置)
-
-```python
-# main.py
-api_key = "your_api_key" 
-model = "gpt-4o"
-llm_factory = create_llm_factory(model,api_key,chat_model=ChatOpenAI)
-```
-
-3. **配置工具**
-
-在 `main.py` 中导入工具函数（基于langchain的@tool装饰器的工具函数，或在导入后增加@tool装饰器包装函数），快速接入本地数据或业务逻辑。
-
-```python
-from simple_llm_workflow.server.executor_manager import executor_manager
-from your_path import ( tools )
-
-executor_manager.register_tool("your_tool_name", your_tool)
-```
-
-4. **终端运行**
-
-```bash
-.\run.bat
-```
+配置完成后，重新运行 `python -m simple_llm_workflow.app` 即可生效。
 
 ## 界面配置说明
 
