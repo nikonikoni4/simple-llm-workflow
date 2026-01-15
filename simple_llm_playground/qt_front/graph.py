@@ -981,21 +981,21 @@ class NodeGraphView(QGraphicsView):
         1. main线程不能被删除
         2. 删除后，所有 thread_view_index > deleted_idx 的线程索引 -1
         """
-        thread_id = item.node_data.thread_id
+        del_thread_id = item.node_data.thread_id
         
         # 规则1: 检查是否是 main 线程
-        if thread_id == "main":
+        if del_thread_id == "main":
             print("Cannot delete main thread")
             return
-            
+             
         # 1. 获取当前删除线程的 viewId
-        del_viewId = self.threadId_map_viewId.get(thread_id)
+        del_viewId = self.threadId_map_viewId.get(del_thread_id)
         if del_viewId is None:
-            print(f"Thread {thread_id} not found in threadId_map_viewId")
+            print(f"Thread {del_thread_id} not found in threadId_map_viewId")
             return
         
-        # 2. 删除 threadId_map_viewId 中的 thread_id
-        del self.threadId_map_viewId[thread_id]
+        # 2. 删除 threadId_map_viewId 中的 del_thread_id
+        del self.threadId_map_viewId[del_thread_id]
         
         # 3. 遍历 threadId_map_viewId，更新索引
         # 所有 viewId > del_viewId 的线程，其 viewId -= 1
@@ -1003,28 +1003,48 @@ class NodeGraphView(QGraphicsView):
             if self.threadId_map_viewId[tid] > del_viewId:
                 self.threadId_map_viewId[tid] -= 1
         
-        # 4. 删除所有节点中 thread_id 为 thread_id 的节点
+        # 4. 删除所有节点中 thread_id 为 del_thread_id 的节点
         nodes_to_remove = []
+        deleted_ids = []  # 收集所有被删除节点的 ID
         for i in self.scene.items():
-            if isinstance(i, NodeItem) and i.node_data.thread_id == thread_id:
+            if isinstance(i, NodeItem) and i.node_data.thread_id == del_thread_id:
                 nodes_to_remove.append(i)
+                deleted_ids.append(i.node_data.node_id)
         
+        # 删除节点
         for node in nodes_to_remove:
             self.scene.removeItem(node)
         
-        # 5. 更新剩余节点的 thread_view_index
+        # 对删除的 ID 排序，用于高效计算偏移量
+        deleted_ids.sort()
+        
+        # 5. 更新剩余节点的 node_id 和 thread_view_index
         remaining_nodes = [i for i in self.scene.items() if isinstance(i, NodeItem)]
         for node in remaining_nodes:
+            # 使用二分查找计算有多少被删除的 ID 小于当前节点的 ID
+            import bisect
+            count_smaller = bisect.bisect_left(deleted_ids, node.node_data.node_id)
+            
+            # 更新 node_id（如果有需要）
+            if count_smaller > 0:
+                node.node_data.node_id -= count_smaller  # 这会自动触发 x 坐标计算
+            
+            # 更新 thread_view_index
             node_thread_id = node.node_data.thread_id
             if node_thread_id in self.threadId_map_viewId:
                 new_idx = self.threadId_map_viewId[node_thread_id]
                 node.node_data.thread_view_index = new_idx  # 这会自动触发 y 坐标计算
-                node.setPos(node.node_data.x, node.node_data.y)  # 使用自动计算的坐标
+            
+            # 使用自动计算的坐标更新位置
+            node.setPos(node.node_data.x, node.node_data.y)
+        
+        # 更新 next_node_id 计数器
+        self.next_node_id = max(1, self.next_node_id - len(deleted_ids))
         
         # 更新连接线
         self.update_connections()
         
-        print(f"Deleted thread: {thread_id} (viewId: {del_viewId})")
+        print(f"Deleted thread: {del_thread_id} (viewId: {del_viewId})")
 
     def swap_nodes(self, item, direction):
         """
