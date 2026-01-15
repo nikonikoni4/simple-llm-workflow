@@ -150,7 +150,7 @@ executor_manager.register_tool("your_tool_name", your_tool)
 - **Enable Tool Loop (`enable_tool_loop`)**：是否允许 LLM 进行多轮工具调用（默认 False）。
 - **Tool Limit (`tools_limit`)**：限制特定工具的最大调用次数（例如 `{"web_search": 1}`）。
 
-## 自动生成plan.json
+## 自动生成plan/workflow.json
 
 在一个AI IDE中，告诉AI你的需求以及可调用的工具，然后让AI阅读plan-creator-zh或plan-creator-en的skill文件，让其自主生成plan.json的初始版本文件。
 
