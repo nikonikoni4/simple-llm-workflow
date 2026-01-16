@@ -391,7 +391,7 @@ class NodePropertyEditor(QGroupBox):
     def _on_init_tool_selected(self, tool_name: str):
         """处理从下拉菜单中选择的初始工具"""
         # 在右侧面板显示工具参数
-        if tool_name and tool_name != "Select initial tool...":
+        if tool_name and tool_name != "选择初始工具...":
             self._display_tool_info(tool_name)
         else:
             self.tool_info_display.clear()
@@ -609,7 +609,7 @@ class NodePropertyEditor(QGroupBox):
         is_tool_first = (self.type_combo.currentText() == "tool-first")
         if is_tool_first:
             init_tool = self.initial_tool_combo.currentText()
-            val = init_tool if init_tool != "Select initial tool..." else None
+            val = init_tool if init_tool != "选择初始工具..." else None
             self._set_node_val("initial_tool_name", val)
             
             args_str = self.initial_tool_args_edit.toPlainText().strip()

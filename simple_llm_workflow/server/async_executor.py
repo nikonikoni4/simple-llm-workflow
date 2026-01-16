@@ -149,26 +149,28 @@ class AsyncExecutor(Executor):
         self.node_states[node_id].status = NodeStatus.RUNNING
         self.node_states[node_id].start_time = datetime.now()
         
-        # 记录执行前的线程消息
-        messages_before = self._serialize_messages(
-            self._get_thread_messages(node.thread_id)
-        )
-        
         try:
-            # 确保线程存在
+            # 确保线程存在（必须先创建线程，才能记录消息）
             if node.thread_id not in self.context["messages"]:
                 self._create_thread(node.thread_id, node)
+            
+            # 记录执行前的线程消息（在线程确保存在后获取）
+            messages_before = self._serialize_messages(
+                self._get_thread_messages(node.thread_id)
+            )
             
             # 使用处理器分发 (父类的方法)
             handler = self._node_handlers.get(node.node_type)
             if not handler:
                 raise ValueError(f"未知节点类型: {node.node_type}")
             
-            # 记录 LLM 输入
-            llm_input = self._get_prompt(node)
-            
             # 执行节点 (使用 await，兼容父类的异步 handler)
+            # 对于 tool-first 节点，工具调用发生在 handler 内部
             content = await handler(node)
+            
+            # 在节点执行后获取 LLM 输入 prompt
+            # 这样可以确保 tool-first 节点的工具调用结果被包含在 prompt 中
+            llm_input = self._get_prompt(node)
             
             # 如果节点设置了 data_out，根据 data_out_thread 合并到目标线程
             # (这个逻辑已经包含在父类 handler 里了吗？)

@@ -95,19 +95,15 @@ class GuiExecutionPlan(ExecutionPlan):
             )
             self.nodes.insert(0, empty_main_node)
 
+        # 每次导入都重新计算，清空旧的映射以避免错误
+        self.threadId_map_viewId = {}
+        
         for idx, node in enumerate(self.nodes):
-            # 1. 分配 node_id (1-indexed)
+            # 1. 分配 node_id (1-indexed) - 始终根据位置重新计算
             node.node_id = idx + 1
             
-            # 2. 处理 thread_view_index
+            # 2. 处理 thread_view_index - 始终根据 thread_id 首次出现顺序重新计算
             tid = node.thread_id
-            
-            # 检查 JSON 中是否已有 thread_view_index 值 (非默认值0)
-            # 如果已有值，优先使用已保存的值
-            if node.thread_view_index != 0 or (tid == "main" and node.thread_view_index == 0):
-                # 如果节点已有非0的 thread_view_index，或是 main 线程（默认0是正确的），使用它
-                if tid not in self.threadId_map_viewId:
-                    self.threadId_map_viewId[tid] = node.thread_view_index
             
             if tid not in self.threadId_map_viewId:
                 # 为新的 thread_id 分配索引

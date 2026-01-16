@@ -963,6 +963,7 @@ class NodeGraphView(QGraphicsView):
 
     def delete_node(self, item):
         deleted_id = item.node_data.node_id
+        deleted_thread_id = item.node_data.thread_id
         self.scene.removeItem(item)
         
         # 重新对 ID > deleted_id 的所有节点进行编号
@@ -978,6 +979,38 @@ class NodeGraphView(QGraphicsView):
         
         # 递减 next_node_id 计数器
         self.next_node_id = max(1, self.next_node_id - 1)
+        
+        # 检查被删除节点的线程是否还有其他节点
+        # 如果没有，需要删除该线程并重新排序 threadId_map_viewId
+        if deleted_thread_id != "main":  # main 线程不能被删除
+            remaining_nodes = [i for i in self.scene.items() if isinstance(i, NodeItem)]
+            thread_has_nodes = any(
+                node.node_data.thread_id == deleted_thread_id 
+                for node in remaining_nodes
+            )
+            
+            if not thread_has_nodes and deleted_thread_id in self.threadId_map_viewId:
+                # 该线程没有剩余节点，需要删除线程并重新排序
+                del_viewId = self.threadId_map_viewId[deleted_thread_id]
+                
+                # 从映射中删除该线程
+                del self.threadId_map_viewId[deleted_thread_id]
+                
+                # 所有 viewId > del_viewId 的线程，其 viewId -= 1
+                for tid in list(self.threadId_map_viewId.keys()):
+                    if self.threadId_map_viewId[tid] > del_viewId:
+                        self.threadId_map_viewId[tid] -= 1
+                
+                # 更新剩余节点的 thread_view_index
+                for node in remaining_nodes:
+                    node_thread_id = node.node_data.thread_id
+                    if node_thread_id in self.threadId_map_viewId:
+                        new_idx = self.threadId_map_viewId[node_thread_id]
+                        if node.node_data.thread_view_index != new_idx:
+                            node.node_data.thread_view_index = new_idx  # 这会自动触发 y 坐标计算
+                            node.setPos(node.node_data.x, node.node_data.y)
+                
+                print(f"Deleted empty thread: {deleted_thread_id} (viewId: {del_viewId})")
         
         self.update_connections()
     
