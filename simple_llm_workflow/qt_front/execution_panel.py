@@ -37,6 +37,7 @@ class ExecutionControlPanel(QWidget):
     nodeStatesUpdated = pyqtSignal(list)        # node_states list
     saveRequested = pyqtSignal()                # Request to save current state
     toolsLoaded = pyqtSignal(list)              # 工具列表加载完成信号
+    rerunCompleted = pyqtSignal(dict)           # 节点重新执行完成信号
     
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -44,6 +45,7 @@ class ExecutionControlPanel(QWidget):
         self.current_executor_id = None
         self.is_executing = False
         self._plan_data = None  # 保存当前执行计划
+        self._selected_node_id = None  # 当前选中的节点 ID
         
         self._init_ui()
         self._connect_signals()
@@ -91,6 +93,17 @@ class ExecutionControlPanel(QWidget):
         row2.addWidget(self.run_btn)
         
         control_layout.addLayout(row2)
+        
+        # 第三行：重新执行当前节点
+        row3 = QHBoxLayout()
+        
+        self.rerun_btn = QPushButton("🔄 重新执行节点")
+        self.rerun_btn.setToolTip("重新执行当前选中的节点（恢复上下文后重新运行）")
+        self.rerun_btn.setEnabled(False)
+        self.rerun_btn.clicked.connect(self.rerun_node)
+        row3.addWidget(self.rerun_btn)
+        
+        control_layout.addLayout(row3)
         
         main_layout.addWidget(control_group)
         
@@ -150,6 +163,8 @@ class ExecutionControlPanel(QWidget):
         self.controller.runCompleted.connect(self._on_run_completed)
         self.controller.runFailed.connect(self._on_run_failed)
         self.controller.statusUpdated.connect(self._on_status_updated)
+        self.controller.rerunCompleted.connect(self._on_rerun_completed)
+        self.controller.rerunFailed.connect(self._on_rerun_failed)
     
     def load_tools(self):
         """
@@ -236,16 +251,50 @@ class ExecutionControlPanel(QWidget):
             self.current_executor_id = None
             self._reset_ui()
     
+    def rerun_node(self):
+        """重新执行当前选中的节点"""
+        if not self.current_executor_id:
+            QMessageBox.warning(self, "警告", "请先初始化执行器")
+            return
+        
+        if not self._selected_node_id:
+            QMessageBox.warning(self, "警告", "请先选择一个节点")
+            return
+        
+        self.rerun_btn.setEnabled(False)
+        self.step_btn.setEnabled(False)
+        self.run_btn.setEnabled(False)
+        self.status_label.setText(f"重新执行节点 {self._selected_node_id}...")
+        self.status_label.setStyleSheet("color: #FFC107; font-weight: bold;")
+        
+        self.controller.rerun_node(self._selected_node_id)
+    
+    def set_selected_node(self, node_id: int):
+        """设置当前选中的节点 ID"""
+        self._selected_node_id = node_id
+        # 只有在执行器已初始化且节点已执行过时才启用重新执行按钮
+        if self.current_executor_id and node_id is not None:
+            # 这里简单地根据是否有 executor 来启用
+            # 实际应该检查节点是否已执行，但这需要额外的状态跟踪
+            self.rerun_btn.setEnabled(True)
+            self.rerun_btn.setText(f"🔄 重新执行节点 {node_id}")
+        else:
+            self.rerun_btn.setEnabled(False)
+            self.rerun_btn.setText("🔄 重新执行节点")
+    
     def _reset_ui(self):
         """重置 UI 状态"""
         self.init_btn.setEnabled(True)
         self.step_btn.setEnabled(False)
         self.run_btn.setEnabled(False)
         self.stop_btn.setEnabled(False)
+        self.rerun_btn.setEnabled(False)
+        self.rerun_btn.setText("🔄 重新执行节点")
         self.status_label.setText("未初始化")
         self.status_label.setStyleSheet("font-weight: bold;")
         self.progress_bar.setValue(0)
         self.is_executing = False
+        self._selected_node_id = None
     
     def _update_progress(self, progress: dict):
         """更新进度显示"""
@@ -393,6 +442,44 @@ class ExecutionControlPanel(QWidget):
         
         self._update_progress(progress)
         self.nodeStatesUpdated.emit(node_states)
+    
+    def _on_rerun_completed(self, result: dict):
+        """节点重新执行完成"""
+        status = result.get("status")
+        node_context = result.get("node_context")
+        progress = result.get("progress", {})
+        
+        self._update_progress(progress)
+        
+        self.status_label.setText("节点重新执行完成")
+        self.status_label.setStyleSheet("color: #4CAF50; font-weight: bold;")
+        
+        # 重新启用按钮
+        self.step_btn.setEnabled(True)
+        self.run_btn.setEnabled(True)
+        if self._selected_node_id:
+            self.rerun_btn.setEnabled(True)
+        
+        if node_context:
+            self.rerunCompleted.emit(node_context)
+            # 也触发 stepExecuted 以更新上下文面板
+            self.stepExecuted.emit(node_context)
+    
+    def _on_rerun_failed(self, error: str):
+        """节点重新执行失败"""
+        # 检查是否为会话失效
+        if self._check_session_error(error):
+            self.executionError.emit("会话已过期（后端已重启）。请重新初始化。")
+            return
+        
+        self.step_btn.setEnabled(True)
+        self.run_btn.setEnabled(True)
+        if self._selected_node_id:
+            self.rerun_btn.setEnabled(True)
+        self.status_label.setText("重新执行失败")
+        self.status_label.setStyleSheet("color: #F44336; font-weight: bold;")
+        
+        self.executionError.emit(error)
     
     def cleanup(self):
         """清理资源"""

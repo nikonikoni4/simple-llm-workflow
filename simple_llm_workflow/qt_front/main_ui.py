@@ -293,6 +293,12 @@ class MainWindow(QMainWindow):
             
             if nid is not None:
                 self.execution_panel.controller.get_node_context(nid)
+        
+        # 5. 通知执行面板当前选中的节点 ID（用于重新执行功能）
+        nid = getattr(node_props, "node_id", None)
+        if nid is None and isinstance(node_props, dict):
+            nid = node_props.get("id")
+        self.execution_panel.set_selected_node(nid)
 
     def on_node_data_changed(self):
         # 如果数据更改影响了连接（如 thread_id），则更新图形视图中的连接

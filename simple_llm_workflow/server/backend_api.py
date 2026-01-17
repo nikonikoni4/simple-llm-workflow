@@ -301,6 +301,32 @@ async def get_node_context(executor_id: str, node_id: int):
     return NodeContextResponse(**context.model_dump())
 
 
+@app.post("/api/executor/{executor_id}/nodes/{node_id}/rerun", response_model=StepExecutorResponse)
+async def rerun_node(executor_id: str, node_id: int):
+    """
+    重新执行指定节点
+    
+    恢复到该节点执行前的上下文状态，然后重新执行该节点。
+    该节点及之后的所有节点状态会被重置为 PENDING。
+    """
+    executor = executor_manager.get_executor(executor_id)
+    if not executor:
+        raise HTTPException(status_code=404, detail="Executor not found")
+    
+    try:
+        context = await executor.rerun_node(node_id)
+        
+        return StepExecutorResponse(
+            status="success",
+            message=f"节点 {node_id} 重新执行完成",
+            node_context=context.model_dump() if context else None,
+            progress=executor.get_execution_progress()
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 @app.get("/api/executor/{executor_id}/messages")
 async def get_executor_messages(executor_id: str, thread_id: str = None):
     """

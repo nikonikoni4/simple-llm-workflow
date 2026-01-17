@@ -215,6 +215,25 @@ class ApiClient(QObject):
         )
         return NodeContextResponse(**data)
     
+    async def rerun_node(self, executor_id: str, node_id: int) -> StepExecutorResponse:
+        """
+        重新执行指定节点
+        
+        恢复到该节点执行前的上下文状态，然后重新执行该节点。
+        
+        Args:
+            executor_id: 执行器 ID
+            node_id: 要重新执行的节点 ID
+            
+        Returns:
+            StepExecutorResponse: 包含 status, message, node_context, progress
+        """
+        data = await self._request(
+            "POST", 
+            f"/api/executor/{executor_id}/nodes/{node_id}/rerun"
+        )
+        return StepExecutorResponse(**data)
+    
     async def get_executor_messages(
         self, 
         executor_id: str, 
@@ -275,6 +294,10 @@ class ApiClient(QObject):
     def sync_terminate_executor(self, executor_id: str) -> TerminateExecutorResponse:
         """同步终止执行器"""
         return asyncio.run(self.terminate_executor(executor_id))
+    
+    def sync_rerun_node(self, executor_id: str, node_id: int) -> StepExecutorResponse:
+        """同步重新执行节点"""
+        return asyncio.run(self.rerun_node(executor_id, node_id))
 
 
 
@@ -368,6 +391,8 @@ try:
         statusUpdated = pyqtSignal(dict)
         contextLoaded = pyqtSignal(dict)
         contextFailed = pyqtSignal(str)
+        rerunCompleted = pyqtSignal(dict)  # 节点重新执行完成
+        rerunFailed = pyqtSignal(str)      # 节点重新执行失败
         
         def __init__(self, base_url: str = f"http://localhost:{BACKEND_PORT}", parent=None):
             super().__init__(parent)
@@ -411,6 +436,8 @@ try:
                 self.statusUpdated.emit(result_dict)
             elif task_id.startswith("context_"):
                 self.contextLoaded.emit(result_dict)
+            elif task_id.startswith("rerun_"):
+                self.rerunCompleted.emit(result_dict)
         
         def _on_task_failed(self, task_id: str, error: str):
             """处理任务失败"""
@@ -422,6 +449,8 @@ try:
                 self.runFailed.emit(error)
             elif task_id.startswith("context_"):
                 self.contextFailed.emit(error)
+            elif task_id.startswith("rerun_"):
+                self.rerunFailed.emit(error)
         
         def init_executor(self, plan: dict):
             """初始化执行器"""
@@ -465,6 +494,14 @@ try:
                 coro = self.api_client.terminate_executor(self.current_executor_id)
                 self.worker.run_async(coro, "terminate")
                 self.current_executor_id = None
+        
+        def rerun_node(self, node_id: int):
+            """重新执行指定节点"""
+            if not self.current_executor_id:
+                self.rerunFailed.emit("No executor initialized")
+                return
+            coro = self.api_client.rerun_node(self.current_executor_id, node_id)
+            self.worker.run_async(coro, f"rerun_{node_id}")
 
 except ImportError:
     # PyQt5 不可用时，这些类将不会被定义

@@ -1,6 +1,7 @@
 # 异步执行器定义 V2
 # 独立的异步版本，逻辑与同步版本 Executor 相同
 # 业务扩展应继承此类
+import copy
 from datetime import datetime
 from typing import Callable, Optional, Any
 from llm_linear_executor.executor import Executor 
@@ -53,6 +54,10 @@ class AsyncExecutor(Executor):
         self.node_states: dict[int, NodeExecutionState] = {}
         self.node_contexts: dict[int, NodeContext] = {}
         self._current_node_index = 0  # 当前执行到的节点索引
+        
+        # 上下文历史快照，记录每个节点执行前的 context
+        # 用于支持节点重新执行时恢复上下文
+        self.context_history: dict[int, dict] = {}  # {node_id: deepcopy(self.context)}
         
         # 初始化所有节点状态
         self._init_node_states()
@@ -145,6 +150,9 @@ class AsyncExecutor(Executor):
         Returns:
             节点执行结果
         """
+        # 保存执行前的上下文快照（用于支持重新执行）
+        self.context_history[node_id] = copy.deepcopy(self.context)
+        
         # 更新状态为 RUNNING
         self.node_states[node_id].status = NodeStatus.RUNNING
         self.node_states[node_id].start_time = datetime.now()
@@ -271,3 +279,59 @@ class AsyncExecutor(Executor):
             "pending": total - completed - failed - running,
             "progress_percent": (completed / total * 100) if total > 0 else 0
         }
+
+    async def rerun_node(self, node_id: int) -> Optional[NodeContext]:
+        """
+        重新执行指定节点
+        
+        1. 恢复到该节点执行前的 context
+        2. 重置该节点及之后节点的状态
+        3. 重新执行该节点
+        
+        Args:
+            node_id: 要重新执行的节点 ID
+            
+        Returns:
+            NodeContext: 执行完成的节点上下文
+            
+        Raises:
+            ValueError: 如果节点尚未执行过
+        """
+        if node_id not in self.context_history:
+            raise ValueError(f"节点 {node_id} 尚未执行过，无法重新运行")
+        
+        if node_id < 1 or node_id > len(self.plan.nodes):
+            raise ValueError(f"节点 ID {node_id} 超出范围 (1-{len(self.plan.nodes)})")
+        
+        logger.info(f"🔄 重新执行节点 {node_id}")
+        
+        # 1. 恢复上下文到该节点执行前的状态
+        self.context = copy.deepcopy(self.context_history[node_id])
+        
+        # 2. 删除该节点及之后的历史和上下文
+        for nid in list(self.context_history.keys()):
+            if nid >= node_id:
+                del self.context_history[nid]
+        for nid in list(self.node_contexts.keys()):
+            if nid >= node_id:
+                del self.node_contexts[nid]
+        
+        # 3. 重置该节点及之后的状态为 PENDING
+        for nid, state in self.node_states.items():
+            if nid >= node_id:
+                state.status = NodeStatus.PENDING
+                state.start_time = None
+                state.end_time = None
+                state.error = None
+        
+        # 4. 更新当前节点索引
+        self._current_node_index = node_id - 1
+        
+        # 5. 执行该节点
+        node = self.plan.nodes[node_id - 1]
+        self.reset_tools_limit(node)
+        await self._execute_single_node(node, node_id)
+        
+        logger.info(f"✅ 节点 {node_id} 重新执行完成")
+        
+        return self.node_contexts.get(node_id)
