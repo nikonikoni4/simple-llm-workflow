@@ -12,8 +12,8 @@ class NodeContextPanel(QGroupBox):
         # 上下文消息部分
         self.context_section = CollapsibleSection("Context Information")
         self.context_browser = QTextBrowser()
-        self.context_browser.setMinimumHeight(1200)
-        self.context_browser.setMaximumHeight(2400)
+        self.context_browser.setMinimumHeight(300)
+        self.context_browser.setMaximumHeight(1500)
         self.context_browser.setPlaceholderText("No context data available")
         self.context_section.set_content(self.context_browser)
         self.main_layout.addWidget(self.context_section)
@@ -21,8 +21,8 @@ class NodeContextPanel(QGroupBox):
         # LLM 输入提示词部分
         self.prompt_section = CollapsibleSection("LLM Input Prompt")
         self.prompt_browser = QTextBrowser()
-        self.prompt_browser.setMinimumHeight(1200)
-        self.prompt_browser.setMaximumHeight(2400)
+        self.prompt_browser.setMinimumHeight(600)
+        self.prompt_browser.setMaximumHeight(1500)
         self.prompt_browser.setPlaceholderText("No prompt data available")
         self.prompt_section.set_content(self.prompt_browser)
         self.main_layout.addWidget(self.prompt_section)
@@ -30,8 +30,8 @@ class NodeContextPanel(QGroupBox):
         # 节点输出部分
         self.output_section = CollapsibleSection("Node Output")
         self.output_browser = QTextBrowser()
-        self.output_browser.setMinimumHeight(1200)
-        self.output_browser.setMaximumHeight(2400)
+        self.output_browser.setMinimumHeight(600)
+        self.output_browser.setMaximumHeight(1500)
         self.output_browser.setPlaceholderText("No output data available")
         self.output_section.set_content(self.output_browser)
         self.main_layout.addWidget(self.output_section)
