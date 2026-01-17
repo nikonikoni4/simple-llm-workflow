@@ -157,6 +157,7 @@ class MainWindow(QMainWindow):
 
         # 初始状态
         self._switching_pattern = False  # 防止循环触发
+        self.current_file_path = None  # 当前加载的文件路径（由 main 管理）
         
         # 自动创建默认的 "custom" pattern
         self.graph_view.create_new_pattern("custom")
@@ -379,10 +380,20 @@ class MainWindow(QMainWindow):
 
     def load_plans(self):
         """加载 JSON 计划文件"""
+        from llm_linear_executor.os_plan import load_plans_from_templates
+        
         path, _ = QFileDialog.getOpenFileName(self, "Load Plan JSON", "", "JSON Files (*.json)")
         if path:
             try:
-                patterns = self.graph_view.load_from_file(path)
+                # 在 main_ui 中执行文件读取
+                plans_data = load_plans_from_templates(path, schema=GuiExecutionPlan)
+                
+                # 将数据传递给 graph_view 进行处理
+                patterns = self.graph_view.load_plans_data(plans_data)
+                
+                # 记录当前文件路径
+                self.current_file_path = path
+                
                 print(f"Loaded {len(patterns)} patterns: {patterns}")
             except Exception as e:
                 print(f"Error loading plans: {e}")
@@ -391,18 +402,28 @@ class MainWindow(QMainWindow):
 
     def save_plan(self):
         """保存 JSON 计划文件"""
+        import json
+        
         # 如果没有加载过文件，则询问保存路径
-        if not self.graph_view.current_file_path:
+        if not self.current_file_path:
             path, _ = QFileDialog.getSaveFileName(self, "Save Plan JSON", "", "JSON Files (*.json)")
             if not path:
                 return
         else:
-            path = self.graph_view.current_file_path
+            path = self.current_file_path
         
         try:
-            success = self.graph_view.save_to_file(path)
-            if success:
-                print(f"Plan saved successfully to {path}")
+            # 从 graph_view 获取要保存的数据
+            save_data = self.graph_view.get_save_data()
+            
+            # 在 main_ui 中执行文件写入
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(save_data, f, indent=2, ensure_ascii=False)
+            
+            # 更新当前文件路径
+            self.current_file_path = path
+            
+            print(f"Saved {len(save_data)} patterns to {path}")
         except Exception as e:
             print(f"Error saving plan: {e}")
             import traceback

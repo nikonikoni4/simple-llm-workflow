@@ -526,7 +526,6 @@ class NodeGraphView(QGraphicsView):
         # === 多 Pattern 数据存储 ===
         self.all_plans: Dict[str, GuiExecutionPlan] = {}  # pattern_name -> GuiExecutionPlan
         self.current_pattern: str = ""  # 当前显示的 pattern 名称
-        self.current_file_path: Optional[str] = None  # 当前加载的文件路径
         
         # === 连接 ThreadManager 信号 ===
         tm = ThreadManager.instance()
@@ -1256,20 +1255,17 @@ class NodeGraphView(QGraphicsView):
         self.add_node(node_data)
     # ==================== 多 Pattern 数据管理 ====================
     
-    def load_from_file(self, file_path: str) -> List[str]:
+    def load_plans_data(self, plans_data: Dict[str, GuiExecutionPlan]) -> List[str]:
         """
-        从文件加载所有 patterns
+        加载所有 patterns 数据
         
         参数:
-            file_path: JSON 文件路径
+            plans_data: pattern_name -> GuiExecutionPlan 的字典
             
         返回:
             pattern 名称列表（用于填充 ComboBox）
         """
-        from llm_linear_executor.os_plan import load_plans_from_templates
-        
-        self.all_plans = load_plans_from_templates(file_path, schema=GuiExecutionPlan)
-        self.current_file_path = file_path
+        self.all_plans = plans_data
         patterns = list(self.all_plans.keys())
         
         # 自动加载第一个 pattern
@@ -1375,42 +1371,23 @@ class NodeGraphView(QGraphicsView):
         self._save_current_to_plans()
         return self.all_plans
     
-    def save_to_file(self, file_path: Optional[str] = None) -> bool:
+    def get_save_data(self) -> Dict[str, dict]:
         """
-        保存所有 plans 到文件
+        获取用于保存的数据
         
-        参数:
-            file_path: 保存路径，如果为 None 则使用原加载路径
-            
         返回:
-            是否保存成功
+            pattern_name -> plan_dict 的字典，可直接用于 JSON 序列化
         """
-        path = file_path or self.current_file_path
-        if not path:
-            print("Error: No file path specified for saving")
-            return False
-        
         # 确保当前 pattern 的数据已更新
         self._save_current_to_plans()
         
-        try:
-            # 构建保存格式：将所有 plans 合并到一个 JSON 中
-            # 格式: {"pattern1": {...}, "pattern2": {...}}
-            all_data = {}
-            for pattern_name, plan in self.all_plans.items():
-                all_data[pattern_name] = plan.model_dump(exclude_none=True)
-            
-            with open(path, "w", encoding="utf-8") as f:
-                json.dump(all_data, f, indent=2, ensure_ascii=False)
-            
-            self.current_file_path = path
-            print(f"Saved {len(self.all_plans)} patterns to {path}")
-            return True
-        except Exception as e:
-            print(f"Error saving to file: {e}")
-            import traceback
-            traceback.print_exc()
-            return False
+        # 构建保存格式：将所有 plans 合并到一个 JSON 中
+        # 格式: {"pattern1": {...}, "pattern2": {...}}
+        all_data = {}
+        for pattern_name, plan in self.all_plans.items():
+            all_data[pattern_name] = plan.model_dump(exclude_none=True)
+        
+        return all_data
     
     def update_current_task(self, task: str):
         """
